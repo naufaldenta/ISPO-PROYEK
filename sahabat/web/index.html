@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAHABAT Sekolah</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-bar="kamera_terputus">
+  <img id="video" alt="Video kamera dengan kerangka tubuh">
+
+  <div id="top-row">
+    <div id="chip"><span id="dot">●</span> <span id="fps">0</span> FPS · <span id="people">0</span> orang</div>
+    <button id="words" type="button" data-status="memuat" title="Tombol M">Kata kasar: memuat…</button>
+    <button id="flip" type="button" title="Tombol C">Balik kiri-kanan: mati</button>
+    <button id="devices" type="button">Perangkat</button>
+  </div>
+  <div id="slow" hidden></div>
+  <div id="reconnect" hidden>Menyambung ulang…</div>
+  <div id="rec" hidden>● MEREKAM <span id="rec-hint">J = jatuh · K = kekerasan · B = adegan biasa</span></div>
+  <div id="mark" hidden></div>
+
+  <div id="words-notice" role="status" aria-live="polite" hidden></div>
+
+  <div id="bar" role="status" aria-live="assertive">
+    <span id="bar-text">MENUNGGU KAMERA</span>
+    <span id="bar-buttons">
+      <button id="ack" type="button" hidden>Sudah diperiksa</button>
+      <button id="mute" type="button" hidden>Senyap</button>
+    </span>
+  </div>
+
+  <div id="start-layer">
+    <h1>SAHABAT Sekolah</h1>
+    <p>Peringatan dini jatuh dan indikasi kekerasan fisik. Setiap peringatan harus diperiksa guru.</p>
+    <button id="start" type="button">Mulai</button>
+    <button id="start-devices" type="button">Pilih kamera / mikrofon</button>
+    <p class="hint">Tombol spasi = Sudah diperiksa</p>
+  </div>
+
+  <dialog id="device-dialog" aria-labelledby="device-title">
+    <h2 id="device-title">Kamera &amp; mikrofon</h2>
+    <p>Pilih perangkat bawaan laptop atau USB sesuai namanya. Setelah memasang perangkat baru, tekan <strong>Cari ulang</strong>.</p>
+    <form id="device-form">
+      <label for="camera-select">Kamera</label>
+      <select id="camera-select" disabled><option>Memuat…</option></select>
+      <div id="camera-status" class="device-status" role="status"></div>
+      <label for="microphone-select">Mikrofon</label>
+      <select id="microphone-select" disabled><option>Memuat…</option></select>
+      <div id="microphone-status" class="device-status" role="status"></div>
+      <p class="device-hint">Pilihan diingat untuk penggunaan berikutnya. Mikrofon mengikuti tombol Kata kasar: HIDUP / MATI.</p>
+      <p id="device-message" role="status" aria-live="polite"></p>
+      <div class="device-actions">
+        <button id="device-refresh" type="button">Cari ulang</button>
+        <button id="device-close" type="button">Tutup</button>
+        <button id="device-apply" type="submit" disabled>Terapkan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/devices.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+ultralytics
+openvino
+lap
+opencv-python
+numpy
+scikit-learn
+joblib
+fastapi
+uvicorn[standard]
+pytest
+httpx
+faster-whisper
+sounddevice
+cv2-enumerate-cameras==1.3.3

@@ -1,0 +1,215 @@
+"""Server lokal: halaman layar guru, video MJPEG, keadaan lewat WebSocket."""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+
+from .config import DATA_DIR, MODELS_DIR, SETTINGS_PATH, WORDS_PATH, Config, load
+from .engine import SLOW_TEXT, Engine
+from .listener import STATUS_LABEL, Listener
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+VIDEO_GAP_S = 0.05        # paling cepat 20 frame per detik
+STATE_GAP_S = 0.2
+VIOLENCE_MODEL = MODELS_DIR / "violence_model.joblib"
+FALL_MODEL = MODELS_DIR / "fall_model.joblib"
+NO_CACHE = {"Cache-Control": "no-store"}
+MARK_LABELS = ("jatuh", "kekerasan", "biasa")      # tanda adegan saat merekam uji
+
+
+class _FreshStaticFiles(StaticFiles):
+    """Berkas halaman tidak boleh disimpan browser: folder aplikasi bisa diganti versi baru."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+def mjpeg_chunk(jpeg: bytes) -> bytes:
+    return (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpeg)).encode()
+            + b"\r\n\r\n" + jpeg + b"\r\n")
+
+
+def _words(listener) -> dict:
+    """Keadaan pendengar kata kasar untuk layar. Tanpa pendengar: tombolnya menulis "tidak tersedia"."""
+    if listener is None:
+        return {"status": "tidak_tersedia", "label": STATUS_LABEL["tidak_tersedia"], "notice": "", "notice_seq": 0}
+    w = listener.snapshot()
+    return {"status": w.status, "label": w.label, "notice": w.notice, "notice_seq": w.notice_seq}
+
+
+def _state(engine, listener=None, inputs=None) -> dict:
+    s = engine.snapshot()
+    state = {"bar": s.bar, "text": s.text, "fps": s.fps, "people": s.people, "slow": s.slow,
+            "slow_text": s.slow_text or (SLOW_TEXT if s.slow else ""), "alarm_seq": s.alarm_seq,
+            "recording": bool(s.recording), "words": _words(listener),
+            "flip": bool(getattr(getattr(engine, "source", None), "flip", False))}
+    if inputs is not None:
+        state["devices"] = inputs.status()
+    return state
+
+
+def remember_flip(on: bool) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, camera_flip=bool(on))
+
+
+def create_app(engine, listener=None, inputs=None) -> FastAPI:
+    if inputs is None and getattr(engine, "source", None) is not None:
+        from .input_control import InputDevices
+        inputs = InputDevices(engine, listener)
+    app = FastAPI(title="SAHABAT Sekolah", docs_url=None, redoc_url=None, openapi_url=None)
+    app.mount("/static", _FreshStaticFiles(directory=WEB_DIR), name="static")
+
+    @app.get("/")
+    async def index():
+        return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
+
+    @app.get("/video")
+    async def video():
+        async def frames():
+            while True:
+                jpeg = await run_in_threadpool(engine.latest_jpeg)
+                if jpeg:
+                    yield mjpeg_chunk(jpeg)
+                await asyncio.sleep(VIDEO_GAP_S)
+        return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame",
+                                 headers=NO_CACHE)
+
+    @app.websocket("/ws")
+    async def ws(socket: WebSocket):
+        await socket.accept()
+        try:
+            while True:
+                await socket.send_json(_state(engine, listener, inputs))
+                await asyncio.sleep(STATE_GAP_S)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
+    @app.post("/api/ack")
+    async def ack():
+        return {"ok": bool(await run_in_threadpool(engine.acknowledge))}
+
+    @app.post("/api/tanda")
+    async def mark(request: Request):
+        """Pencatat menandai adegan yang baru diperagakan (hanya berarti saat merekam uji)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        label = body.get("label") if isinstance(body, dict) else None
+        if label not in MARK_LABELS:
+            return {"ok": False}
+        return {"ok": bool(await run_in_threadpool(engine.mark, label))}
+
+    @app.post("/api/kata")
+    async def words(request: Request):
+        """Tombol hidup/mati pendengar kata kasar."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        on = body.get("on") if isinstance(body, dict) else None
+        if listener is None or not isinstance(on, bool):
+            return {"ok": False}
+        return {"ok": True, "on": bool(await run_in_threadpool(listener.set_enabled, on))}
+
+    @app.post("/api/cermin")
+    async def flip(request: Request):
+        """Tombol balik kiri-kanan gambar kamera; pilihannya diingat per laptop."""
+        source = getattr(engine, "source", None)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        on = body.get("on") if isinstance(body, dict) else None
+        if source is None or not isinstance(on, bool):
+            return {"ok": False}
+        source.flip = on
+        try:
+            await run_in_threadpool(remember_flip, on)
+        except OSError:
+            pass                                            # tetap berlaku untuk sesi ini
+        return {"ok": True, "on": on}
+
+    @app.get("/api/ping")
+    async def ping():
+        return {"app": "sahabat"}
+
+    @app.get("/api/perangkat")
+    async def devices():
+        if inputs is None:
+            return JSONResponse({"ok": False, "error": "Pemilih perangkat tidak tersedia."}, status_code=503)
+        return await run_in_threadpool(inputs.scan)
+
+    @app.post("/api/perangkat")
+    async def select_devices(request: Request):
+        if inputs is None:
+            return JSONResponse({"ok": False, "error": "Pemilih perangkat tidak tersedia."}, status_code=503)
+        try:
+            values = await request.json()
+            status = await run_in_threadpool(inputs.apply, values)
+            return {"ok": True, **status}
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": "Pilihan belum diterapkan: " + str(exc)}, status_code=503)
+
+    return app
+
+
+def build_engine(cfg: Config, source=None, record: bool = False) -> Engine:
+    """Merangkai mesin nyata: webcam (atau file), YOLO-pose, log, dan model bila ada.
+
+    record=True menyalakan perekam uji (data/rekaman/); bawaannya tidak ada video yang disimpan.
+    """
+    from .pose import YoloPose
+    from .predlog import PredLog
+    from .source import VideoSource
+
+    if source is None:
+        source = VideoSource(cfg.camera, flip=cfg.camera_flip)
+        source.start()
+    pose = YoloPose(cfg.imgsz or cfg.imgsz_candidates[-1])
+    recorder = None
+    if record:
+        from .recorder import Recorder
+        recorder = Recorder(DATA_DIR / "rekaman")
+    return Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, VIOLENCE_MODEL, FALL_MODEL, recorder)
+
+
+def build_listener(cfg: Config, clip_dir: Path | None = None, on_toggle=None) -> Listener:
+    """Merangkai pendengar nyata: mikrofon bawaan, Whisper base dari models/, log kata di data/log.
+
+    clip_dir hanya diisi di mode rekam uji; di mode biasa tidak ada suara atau teks ucapan yang disimpan.
+    """
+    from .mic import open_mic
+    from .predlog import PredLog
+    from .speech import MODEL_DIR, WhisperRecognizer
+
+    def make_recognizer():
+        return WhisperRecognizer(MODEL_DIR, cfg.speech_threads, cfg.speech_no_repeat_ngram,
+                                 cfg.speech_repetition_penalty, encoder_min_s=cfg.speech_encoder_min_s)
+
+    return Listener(cfg, WORDS_PATH, make_recognizer, open_mic,
+                    PredLog(DATA_DIR / "log", prefix="kata"), clip_dir, on_toggle)
+
+
+def dev_app() -> FastAPI:
+    """Untuk pengembangan: uvicorn --factory sahabat.server:dev_app"""
+    cfg = load(SETTINGS_PATH)
+    engine = build_engine(cfg)
+    engine.start()
+    listener = None
+    try:
+        listener = build_listener(cfg)
+        listener.start()
+    except Exception as e:
+        print(f"Peringatan: pendengar kata kasar tidak bisa dinyalakan ({e}); bagian kamera tetap jalan.")
+    return create_app(engine, listener)

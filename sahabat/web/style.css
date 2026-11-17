@@ -1,0 +1,176 @@
+:root {
+  --bar-h: 15vh;
+  --green: #17914a;
+  --red: #d92d20;
+  --gray: #5b6168;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #fff;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#video {
+  position: fixed;
+  inset: 0 0 var(--bar-h) 0;
+  width: 100vw;
+  height: calc(100vh - var(--bar-h));
+  object-fit: contain;       /* jangan memotong kepala atau kaki */
+  background: #000;
+}
+
+#chip, #slow, #reconnect, #rec, #mark {
+  position: fixed;
+  top: 2vh;
+  padding: 0.6vh 1.4vw;
+  border-radius: 999px;
+  background: rgba(20, 20, 22, 0.78);
+  font-size: 2.2vh;
+  font-variant-numeric: tabular-nums;
+}
+#top-row { position: fixed; top: 2vh; left: 1.5vw; display: flex; gap: 0.8vw; align-items: center; }
+#top-row #chip { position: static; }
+/* Tombol hidup/mati pendengar kata kasar: sekecil keterangan FPS, bukan sebesar tombol alarm. */
+#words {
+  font-size: 2.2vh;
+  font-weight: 400;
+  padding: 0.6vh 1.4vw;
+  border-radius: 999px;
+  background: rgba(20, 20, 22, 0.78);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#words::before { content: "● "; color: var(--gray); }
+#words[data-status="hidup"]::before { color: var(--green); }
+#words:disabled { cursor: default; opacity: 0.75; }
+#dot { color: var(--green); }
+body[data-bar="kamera_terputus"] #dot { color: var(--gray); }
+#slow { left: 50%; transform: translateX(-50%); background: #b54708; }
+#reconnect { right: 1.5vw; background: #b54708; }
+#rec { top: 8vh; left: 1.5vw; color: #ff6b5e; font-weight: 700; }
+#rec-hint { color: #fff; font-weight: 400; margin-left: 0.8vw; }
+#mark { top: 14vh; left: 1.5vw; }
+
+#bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: var(--bar-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3vw;
+  padding: 0 2vw;
+  background: var(--gray);
+  transition: background 0.15s;
+}
+#bar-text {
+  font-size: min(8vh, 4.6vw);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* Tulisan alarm terpanjang ("INDIKASI KEKERASAN TERDETEKSI") lebarnya ~28 em: harus muat selebar layar. */
+body[data-bar="jatuh"] #bar-text,
+body[data-bar="kekerasan"] #bar-text { font-size: min(8vh, 4.2vw); }
+body[data-bar="aman"] #bar { background: var(--green); }
+body[data-bar="jatuh"] #bar,
+body[data-bar="kekerasan"] #bar { background: var(--red); animation: pulse 0.9s ease-in-out infinite; }
+body[data-bar="jatuh"] #bar-text::before,
+body[data-bar="kekerasan"] #bar-text::before { content: "⚠ "; }
+
+@keyframes pulse { 50% { background: #8f1d14; } }
+@media (prefers-reduced-motion: reduce) {
+  body[data-bar="jatuh"] #bar, body[data-bar="kekerasan"] #bar { animation: none; }
+}
+
+/* Peringatan kata kasar: pita kuning tipis di atas pita status. Tidak mengubah pita status dan hilang sendiri. */
+#words-notice {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: var(--bar-h);
+  height: 7vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5b800;
+  color: #1a1a1a;
+  font-size: min(3.6vh, 2.6vw);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+#words-notice[hidden] { display: none; }
+body.noticing #bar-buttons { bottom: calc(var(--bar-h) + 7vh + 2vh); }   /* tombol alarm merah tidak tertutup */
+
+/* Tombol melayang tepat di atas pita, supaya tulisan pita memakai seluruh lebar layar. */
+#bar-buttons {
+  position: fixed;
+  right: 2vw;
+  bottom: calc(var(--bar-h) + 2vh);
+  display: flex;
+  gap: 1vw;
+}
+#bar-buttons button { white-space: nowrap; box-shadow: 0 0.4vh 1.6vh rgba(0, 0, 0, 0.55); }
+button {
+  font: inherit;
+  font-size: 3.4vh;
+  font-weight: 700;
+  padding: 1.6vh 2vw;
+  border: 0;
+  border-radius: 1.2vh;
+  cursor: pointer;
+}
+#ack { background: #fff; color: #7a1a12; }
+#mute { background: rgba(20, 20, 22, 0.85); color: #fff; }
+button:focus-visible { outline: 0.5vh solid #ffd43b; outline-offset: 0.3vh; }
+
+#start-layer {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vh;
+  background: rgba(8, 10, 14, 0.94);
+  text-align: center;
+  padding: 4vw;
+}
+#start-layer h1 { font-size: 7vh; margin: 0; }
+#start-layer p { font-size: 2.8vh; margin: 0; max-width: 70vw; color: #d0d5dd; }
+#start-layer .hint { font-size: 2.2vh; color: #98a2b3; }
+#start { font-size: 5vh; padding: 2.4vh 6vw; background: var(--green); color: #fff; margin: 2vh 0; }
+
+[hidden] { display: none !important; }
+
+#flip { font-size: 2.2vh; padding: 0.6vh 1.4vw; border-radius: 999px; background: rgba(20, 20, 22, 0.78); color: #fff; }
+#devices, #start-devices { font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+#device-dialog {
+  width: min(560px, 92vw); max-height: 88vh; overflow-y: auto;
+  border: 1px solid #536174; border-radius: 16px; padding: 24px;
+  background: #17212e; color: #fff; box-shadow: 0 20px 70px #0009;
+  font-size: 16px;
+}
+#device-dialog::backdrop { background: #000b; }
+#device-dialog h2 { margin: 0 0 12px; font-size: 24px; }
+#device-dialog p { line-height: 1.5; color: #ccd5df; }
+#device-dialog label { display: block; font-weight: 700; margin: 18px 0 8px; }
+#device-dialog select {
+  display: block; width: 100%; font: inherit; padding: 12px 10px;
+  background: #fff; color: #17212e; border: 1px solid #a9b5c4; border-radius: 8px;
+}
+#device-dialog select:focus-visible { outline: 3px solid #ffd43b; outline-offset: 2px; }
+.device-status { font-size: 13px; line-height: 1.5; margin-top: 6px; color: #b7c7da; overflow-wrap: anywhere; }
+#device-dialog .device-hint { font-size: 13px; }
+#device-message { min-height: 24px; font-size: 14px; overflow-wrap: anywhere; }
+.device-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.device-actions button { font-size: 15px; padding: 11px 16px; border-radius: 8px; }
+#device-apply { background: var(--green); color: #fff; }
+#device-dialog button:disabled, #device-dialog select:disabled { opacity: 0.55; cursor: wait; }

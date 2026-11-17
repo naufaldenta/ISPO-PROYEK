@@ -1,0 +1,53 @@
+# Daftar kata kasar SAHABAT Sekolah. Satu kata per baris.
+# Baris berawalan # adalah catatan dan diabaikan.
+# Hanya 40 kata pertama yang diberikan ke pengenal ucapan sebagai petunjuk,
+# jadi kata yang paling penting ditaruh di atas. Ejaan lain = baris tersendiri.
+# Huruf yang dipanjangkan (anjiiir) dan akhiran pendek (-i, -e, -ne, -nya, -mu, -ku, -lah, -an)
+# sudah dikenali sendiri; tidak perlu ditulis.
+# Perubahan berkas ini baru terbaca setelah aplikasi dinyalakan ulang.
+
+# --- Indonesia ---
+anjing
+anjir
+anjay
+anjrit
+bangsat
+bajingan
+kontol
+memek
+ngentot
+goblok
+tolol
+bego
+brengsek
+kampret
+sialan
+
+# --- Jawa ---
+asu
+jancok
+jancuk
+dancok
+ndasmu
+raimu
+gathel
+
+# --- Inggris ---
+fuck
+fucking
+shit
+bitch
+asshole
+bastard
+motherfucker
+
+# Kata di bawah ini juga kata biasa, jadi dimatikan.
+# Hapus tanda # di depannya untuk mengaktifkan.
+# matamu
+# babi
+# monyet
+# tai
+# cok
+# bodoh
+# dick
+# damn
