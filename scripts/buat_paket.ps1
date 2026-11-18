@@ -35,6 +35,9 @@ Copy-Item -LiteralPath (Join-Path $root "kata-kasar.txt") -Destination $Tujuan
 if (-not (Test-Path (Join-Path $root "models\whisper-base\model.bin"))) {
     Write-Warning "Model ucapan belum ada (python -m sahabat.speech --unduh); paket tetap jalan tanpa peringatan kata kasar."
 }
+if (Test-Path (Join-Path $root "video")) {                # video cadangan pengganti kamera ikut dibawa
+    Salin (Join-Path $root "video") (Join-Path $Tujuan "video") $null
+}
 New-Item -ItemType Directory -Force (Join-Path $Tujuan "data") | Out-Null   # kosong: pengaturan dibuat ulang di laptop tujuan
 
 $ukuran = (Get-ChildItem -Recurse -File $Tujuan | Measure-Object -Property Length -Sum).Sum / 1GB

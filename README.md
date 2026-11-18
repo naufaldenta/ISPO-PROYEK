@@ -80,11 +80,15 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | Pita kuning | Peringatan kata kasar; hilang sendiri, kata disensor |
 | **Sudah diperiksa** atau tombol **Spasi** | Mematikan alarm setelah guru memeriksa |
 | **Senyap** | Mematikan bunyi alarm |
-| **Perangkat** | Memilih kamera dan mikrofon |
+| **Perangkat** | Memilih kamera, mikrofon, video cadangan, dan volume alarm (ada tombol **Coba bunyi**) |
 | **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
 | **Zona** | Menggambar area yang dipantau; orang yang titik tengah badannya di luar zona tidak dinilai |
 | **Kata kasar** atau tombol **M** | Menghidupkan / mematikan peringatan kata kasar |
 | **Balik kiri-kanan** atau tombol **C** | Membalik gambar kamera |
+
+**Video cadangan.** Bila kamera bermasalah saat demo, buka **Perangkat**, tekan **Tambah video…** (atau salin video
+ke folder `video/` lalu **Cari ulang**), pilih videonya di daftar Kamera, lalu **Terapkan**. Video diputar berulang
+dan dinilai seperti kamera. Pilihan ini hanya untuk sesi itu; saat dinyalakan ulang, SAHABAT kembali ke kamera.
 
 `Mulai SAHABAT (rekam uji).bat` menyalakan mode uji yang **menyimpan video kamera** di `data/rekaman` untuk
 penyetelan. Pakai hanya dengan izin semua orang yang terekam, lalu hapus rekamannya setelah selesai.
@@ -174,7 +178,7 @@ ISPO-PROYEK/
 └── assets/                        Logo dan gambar README
 ```
 
-Folder `runtime/` dan `data/` dibuat otomatis dan tidak ikut repositori.
+Folder `runtime/`, `data/`, dan `video/` dibuat otomatis dan tidak ikut repositori.
 
 ## Untuk pengembang
 

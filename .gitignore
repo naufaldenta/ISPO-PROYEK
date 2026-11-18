@@ -4,6 +4,7 @@ models/whisper-base/
 
 # Data lokal: pengaturan, log, dan rekaman uji tidak pernah ikut repositori
 data/
+video/
 datasets/
 dist/
 

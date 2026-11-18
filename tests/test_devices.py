@@ -52,3 +52,14 @@ def test_microphone_scan_uses_isolated_process_with_timeout(monkeypatch):
     monkeypatch.setattr(devices.subprocess, "run", run)
     assert devices.list_microphones()[0]["name"] == "USB"
     assert seen["timeout"] <= 10 and seen["check"]
+
+
+def test_video_catalog_lists_only_video_files_in_the_folder(tmp_path):
+    from sahabat.devices import list_videos
+    (tmp_path / "B.MP4").write_bytes(b"")
+    (tmp_path / "a.avi").write_bytes(b"")
+    (tmp_path / "foto.jpg").write_bytes(b"")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.mp4").write_bytes(b"")
+    assert [v["id"] for v in list_videos(tmp_path)] == ["video:a.avi", "video:B.MP4"]
+    assert list_videos(tmp_path / "tidak-ada") == []

@@ -41,15 +41,27 @@
   </div>
 
   <dialog id="device-dialog" aria-labelledby="device-title">
-    <h2 id="device-title">Kamera &amp; mikrofon</h2>
+    <h2 id="device-title">Kamera, mikrofon &amp; suara</h2>
     <p>Pilih perangkat bawaan laptop atau USB sesuai namanya. Setelah memasang perangkat baru, tekan <strong>Cari ulang</strong>.</p>
     <form id="device-form">
       <label for="camera-select">Kamera</label>
       <select id="camera-select" disabled><option>Memuat…</option></select>
       <div id="camera-status" class="device-status" role="status"></div>
+      <div class="video-tools">
+        <button id="video-add" type="button">Tambah video…</button>
+        <button id="video-folder" type="button">Buka folder video</button>
+        <input id="video-file" type="file" accept="video/*,.mp4,.avi,.mkv,.mov,.wmv,.webm,.m4v" hidden>
+      </div>
+      <p class="device-hint">Video dari folder <strong>video</strong> bisa dipilih di daftar Kamera sebagai pengganti kamera,
+        misalnya cadangan bila kamera bermasalah saat demo. Video diputar berulang dan hanya berlaku untuk sesi ini.</p>
       <label for="microphone-select">Mikrofon</label>
       <select id="microphone-select" disabled><option>Memuat…</option></select>
       <div id="microphone-status" class="device-status" role="status"></div>
+      <label for="volume">Volume alarm: <span id="volume-value">100%</span></label>
+      <div class="volume-row">
+        <input id="volume" type="range" min="0" max="100" step="5" value="100">
+        <button id="volume-test" type="button">Coba bunyi</button>
+      </div>
       <p class="device-hint">Pilihan diingat untuk penggunaan berikutnya. Mikrofon mengikuti tombol Kata kasar: HIDUP / MATI.</p>
       <p id="device-message" role="status" aria-live="polite"></p>
       <div class="device-actions">

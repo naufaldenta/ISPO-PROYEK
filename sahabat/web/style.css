@@ -240,3 +240,10 @@ button:focus-visible { outline: 0.5vh solid #ffd43b; outline-offset: 0.3vh; }
 .zone-actions button:disabled { opacity: 0.5; cursor: default; }
 #zone-save { background: var(--green); }
 #zone-message { min-height: 22px; margin: 10px 0 0 !important; font-size: 14px; }
+
+/* ---- Video cadangan dan volume di dialog Perangkat ---- */
+.video-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.video-tools button, #volume-test { font-size: 14px; padding: 8px 12px; border-radius: 8px; background: #303944; color: #fff; }
+.volume-row { display: flex; align-items: center; gap: 12px; }
+#volume { flex: 1; accent-color: var(--green); height: 28px; }
+#volume-value { font-weight: 400; color: #ccd5df; }

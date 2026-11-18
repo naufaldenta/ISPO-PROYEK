@@ -20,6 +20,8 @@ VIOLENCE_MODEL = MODELS_DIR / "violence_model.joblib"
 FALL_MODEL = MODELS_DIR / "fall_model.joblib"
 NO_CACHE = {"Cache-Control": "no-store"}
 MARK_LABELS = ("jatuh", "kekerasan", "biasa")      # tanda adegan saat merekam uji
+MAX_VIDEO_BYTES = 4 * 1024 ** 3                    # video cadangan yang diunggah dari layar
+_BAD_NAME_CHARS = set(r'<>:"/\|?*')
 
 
 class _FreshStaticFiles(StaticFiles):
@@ -64,6 +66,33 @@ def _state(engine, listener=None, inputs=None) -> dict:
 def remember_flip(on: bool) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, camera_flip=bool(on))
+
+
+def video_name(name: str) -> str | None:
+    """Nama berkas video yang aman untuk folder video/, atau None."""
+    from .config import VIDEO_EXTENSIONS
+    name = (name or "").strip()
+    if (not name or len(name) > 120 or name in (".", "..") or any(c in _BAD_NAME_CHARS or ord(c) < 32 for c in name)
+            or Path(name).suffix.lower() not in VIDEO_EXTENSIONS or name.startswith(".")):
+        return None
+    return name
+
+
+def _free_name(folder: Path, name: str) -> Path:
+    target = folder / name
+    stem, suffix = Path(name).stem, Path(name).suffix
+    n = 2
+    while target.exists():
+        target = folder / f"{stem} ({n}){suffix}"
+        n += 1
+    return target
+
+
+def open_folder(folder: Path) -> None:
+    """Membuka folder di Windows Explorer supaya guru bisa menyalin video ke sana."""
+    import os
+    folder.mkdir(parents=True, exist_ok=True)
+    os.startfile(str(folder))        # noqa: S606 - hanya folder aplikasi sendiri
 
 
 def remember_zone(zone) -> None:
@@ -189,6 +218,52 @@ def create_app(engine, listener=None, inputs=None) -> FastAPI:
                     await asyncio.sleep(delay)
                 yield mjpeg_chunk(jpeg)
         return StreamingResponse(play(), media_type="multipart/x-mixed-replace; boundary=frame", headers=NO_CACHE)
+
+    @app.post("/api/video")
+    async def upload_video(request: Request, nama: str = ""):
+        """Menyalin video cadangan ke folder video/. Isi berkas dikirim apa adanya sebagai badan permintaan."""
+        folder = getattr(inputs, "video_dir", None)
+        if folder is None:
+            return JSONResponse({"ok": False, "error": "Pemilih video tidak tersedia."}, status_code=503)
+        name = video_name(nama)
+        if name is None:
+            return JSONResponse({"ok": False, "error": "Pilih berkas video (mp4, avi, mkv, mov, wmv, webm)."},
+                                status_code=400)
+        part = None
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            target = _free_name(folder, name)
+            part = target.with_name(target.name + ".part")
+            size = 0
+            with open(part, "wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_VIDEO_BYTES:
+                        raise ValueError("Video terlalu besar (paling besar 4 GB).")
+                    f.write(chunk)
+            if size == 0:
+                raise ValueError("Berkas video kosong.")
+            part.replace(target)
+        except ValueError as exc:
+            if part is not None:
+                part.unlink(missing_ok=True)
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except OSError as exc:
+            if part is not None:
+                part.unlink(missing_ok=True)
+            return JSONResponse({"ok": False, "error": "Video tidak bisa disimpan: " + str(exc)}, status_code=503)
+        return {"ok": True, "id": "video:" + target.name, "nama": target.name}
+
+    @app.post("/api/video/folder")
+    async def video_folder():
+        folder = getattr(inputs, "video_dir", None)
+        if folder is None:
+            return JSONResponse({"ok": False, "error": "Pemilih video tidak tersedia."}, status_code=503)
+        try:
+            await run_in_threadpool(open_folder, folder)
+        except (OSError, AttributeError) as exc:
+            return JSONResponse({"ok": False, "error": "Folder tidak bisa dibuka: " + str(exc)}, status_code=503)
+        return {"ok": True}
 
     @app.post("/api/zona")
     async def set_zone(request: Request):

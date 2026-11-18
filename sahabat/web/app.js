@@ -15,6 +15,8 @@
   let flipped = false;          // gambar kamera dibalik kiri-kanan
   let lastNoticeSeq = null;
   let markTimer = null;
+  const VOLUME_KEY = "sahabat-volume";
+  let volume = readVolume();    // 0..1, diatur dari dialog Perangkat; diingat browser laptop ini
   const MARKS = { KeyJ: "jatuh", KeyK: "kekerasan", KeyB: "biasa" };
 
   // ---- bunyi alarm: dua nada bergantian, dibuat langsung tanpa berkas suara ----
@@ -24,7 +26,7 @@
     const gain = audio.createGain();
     osc.type = "square";
     osc.frequency.value = 880;
-    gain.gain.value = 0.18;
+    gain.gain.value = 0.18 * volume;
     osc.connect(gain).connect(audio.destination);
     osc.start();
     let high = true;
@@ -52,12 +54,42 @@
       const gain = audio.createGain();
       osc.type = "sine";
       osc.frequency.value = hz;
-      gain.gain.value = 0.2;
+      gain.gain.value = 0.2 * volume;
       osc.connect(gain).connect(audio.destination);
       osc.start(audio.currentTime + at);
       osc.stop(audio.currentTime + at + 0.12);
     });
   }
+
+  function readVolume() {
+    try {
+      const v = parseFloat(localStorage.getItem(VOLUME_KEY));
+      return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+    } catch (e) {
+      return 1;
+    }
+  }
+
+  document.addEventListener("sahabat-volume", (ev) => {
+    volume = Math.min(1, Math.max(0, Number(ev.detail) || 0));
+    try { localStorage.setItem(VOLUME_KEY, String(volume)); } catch (e) { /* tetap berlaku untuk sesi ini */ }
+    if (siren) siren.gain.gain.setValueAtTime(0.18 * volume, audio.currentTime);
+  });
+
+  // Contoh bunyi sirene sekitar 1,3 detik dengan volume sekarang (tidak dimainkan saat sirene asli berbunyi).
+  document.addEventListener("sahabat-volume-test", () => {
+    if (siren) return;
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    audio.resume();
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = "square";
+    gain.gain.value = 0.18 * volume;
+    osc.connect(gain).connect(audio.destination);
+    [0, 0.42, 0.84].forEach((at, i) => osc.frequency.setValueAtTime(i % 2 ? 620 : 880, audio.currentTime + at));
+    osc.start();
+    osc.stop(audio.currentTime + 1.26);
+  });
 
   function refreshSound() {
     if (started && RED.has(bar) && !muted) sirenOn(); else sirenOff();
@@ -128,7 +160,7 @@
   }
 
   $("start").addEventListener("click", () => {
-    audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
     audio.resume();
     started = true;
     $("start-layer").hidden = true;

@@ -89,3 +89,20 @@ def list_microphones() -> list[dict]:
 if __name__ == "__main__" and "--microphones" in sys.argv:
     import sounddevice as sd
     print(json.dumps(microphone_catalog(sd.query_devices(), sd.query_hostapis()), ensure_ascii=True))
+
+
+VIDEO_PREFIX = "video:"
+
+
+def list_videos(folder) -> list[dict]:
+    """Video di folder video/ (tidak masuk subfolder), untuk dipilih sebagai pengganti kamera."""
+    from pathlib import Path
+
+    from .config import VIDEO_EXTENSIONS
+    folder = Path(folder)
+    try:
+        files = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS),
+                       key=lambda p: p.name.lower())
+    except OSError:
+        return []
+    return [{"id": VIDEO_PREFIX + p.name, "name": p.name} for p in files]

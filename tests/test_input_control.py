@@ -81,3 +81,65 @@ def test_boolean_is_never_accepted_as_legacy_camera_index(selection):
     engine.source.spec = 0
     with pytest.raises(ValueError):
         control.apply({"camera": False})
+
+
+@pytest.fixture
+def with_videos(selection, tmp_path):
+    control, engine, listener = selection
+    control.video_dir = tmp_path / "video"
+    control.video_dir.mkdir()
+    (control.video_dir / "demo jatuh.mp4").write_bytes(b"x")
+    (control.video_dir / "catatan.txt").write_text("bukan video")
+    return control, engine, listener
+
+
+def test_videos_are_listed_and_selected_for_this_session_only(with_videos):
+    control, engine, listener = with_videos
+    with TestClient(create_app(engine, listener, inputs=control)) as client:
+        catalog = client.get("/api/perangkat").json()
+        assert catalog["videos"] == [{"id": "video:demo jatuh.mp4", "name": "demo jatuh.mp4"}]
+        result = client.post("/api/perangkat", json={"camera": "video:demo jatuh.mp4"}).json()
+        assert result["ok"] and result["camera"] == "video:demo jatuh.mp4" and result["camera_is_video"] is True
+        assert engine.source.spec == str(control.video_dir / "demo jatuh.mp4")
+        assert not control.settings_path.exists()            # video tidak diingat setelah dinyalakan ulang
+        back = client.post("/api/perangkat", json={"camera": "camera:usb"}).json()
+        assert back["camera"] == "camera:usb" and back["camera_is_video"] is False
+        assert load(control.settings_path).camera == "camera:usb"
+
+
+@pytest.mark.parametrize("bad", ["video:hilang.mp4", "video:catatan.txt", "video:../settings.json"])
+def test_unknown_or_unsafe_video_is_refused(with_videos, bad):
+    control, engine, listener = with_videos
+    with TestClient(create_app(engine, listener, inputs=control)) as client:
+        assert client.post("/api/perangkat", json={"camera": bad}).status_code == 400
+    assert engine.source.spec is None
+
+
+def test_upload_copies_the_video_and_never_overwrites(with_videos):
+    control, engine, listener = with_videos
+    with TestClient(create_app(engine, listener, inputs=control)) as client:
+        r = client.post("/api/video", params={"nama": "demo jatuh.mp4"}, content=b"isi video")
+        assert r.json() == {"ok": True, "id": "video:demo jatuh (2).mp4", "nama": "demo jatuh (2).mp4"}
+        assert (control.video_dir / "demo jatuh (2).mp4").read_bytes() == b"isi video"
+        assert (control.video_dir / "demo jatuh.mp4").read_bytes() == b"x"
+        for bad in ("", "a.exe", "../x.mp4", r"c:\x.mp4", ".mp4", "x" * 130 + ".mp4"):
+            assert client.post("/api/video", params={"nama": bad}, content=b"1").status_code == 400
+        assert client.post("/api/video", params={"nama": "kosong.mp4"}, content=b"").status_code == 400
+    assert not list(control.video_dir.glob("*.part")) and not (control.video_dir / "kosong.mp4").exists()
+
+
+def test_open_video_folder(with_videos, monkeypatch):
+    from sahabat import server
+    control, engine, listener = with_videos
+    opened = []
+    monkeypatch.setattr(server, "open_folder", lambda folder: opened.append(folder))
+    with TestClient(create_app(engine, listener, inputs=control)) as client:
+        assert client.post("/api/video/folder").json() == {"ok": True}
+    assert opened == [control.video_dir]
+
+
+def test_without_input_control_video_endpoints_say_so():
+    from tests.test_server import StubEngine
+    with TestClient(create_app(StubEngine())) as client:
+        assert client.post("/api/video", params={"nama": "a.mp4"}, content=b"1").status_code == 503
+        assert client.post("/api/video/folder").status_code == 503
