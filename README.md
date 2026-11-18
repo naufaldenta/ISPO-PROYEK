@@ -134,6 +134,28 @@ Hasil model yang terpasang, diukur pada video lewat jalur yang sama dengan siara
 UR Fall dan GMDCSA-24 ikut dipakai dalam pelatihan, jadi angkanya cenderung lebih tinggi daripada keadaan sebenarnya.
 Kamera yang dipasang tinggi dan melihat dari atas (Bus Violence, AIRTLab) masih menjadi kelemahan.
 
+### Eksperimen A/B/C
+
+Tiga konfigurasi dibandingkan dengan model, data latih, dan ambang yang sama: **A** melihat pose satu frame,
+**B** melihat urutan gerak 1–2 detik, **C** adalah B ditambah konfirmasi (alarm baru muncul bila 3 dari 5 penilaian
+jatuh atau 6 dari 10 penilaian kekerasan melewati ambang). Diuji pada data yang tidak dipakai melatih: 22 kejadian
+jatuh, 250 kejadian kekerasan, dan 28 menit rekaman kegiatan biasa.
+
+| | A | B | C | Aplikasi (C + aturan) |
+|---|---:|---:|---:|---:|
+| F1 jatuh | 0,25 | 0,73 | 0,77 | 0,83 |
+| F1 kekerasan | 0,44 | 0,56 | 0,51 | 0,51 |
+| Alarm keliru per jam, jatuh / kekerasan | 222 / 228 | 12,8 / 156 | 6,4 / 29,9 | – / 34,1 |
+| Waktu peringatan jatuh (median) | 1,03 dtk | 0,96 dtk | 1,29 dtk | 1,22 dtk |
+
+Urutan gerak (B) jauh lebih baik daripada satu frame (A). Konfirmasi (C) memangkas alarm keliru per jam sekitar
+separuh pada jatuh dan lima kali lipat pada kekerasan, dengan harga recall yang turun dan peringatan jatuh sekitar
+0,3 detik lebih lambat.
+
+<p align="center">
+  <img src="assets/eksperimen-abc.png" alt="Hasil eksperimen A/B/C" width="760">
+</p>
+
 ### YOLO11n dibandingkan YOLO26n
 
 Seluruh dataset diekstrak ulang dengan YOLO26n, lalu kedua penilai dilatih ulang dengan resep yang sama. Kecepatan
@@ -194,7 +216,8 @@ Membuat folder portabel untuk disalin ke laptop lain lewat flashdisk, tanpa inte
 powershell -ExecutionPolicy Bypass -File scripts\buat_paket.ps1 -Tujuan D:\SAHABAT
 ```
 
-Alat pelatihan ada di `latih/`. Dataset tidak disertakan karena ukuran dan lisensinya; unduh dari sumber aslinya
+Alat pelatihan ada di `latih/`. Eksperimen A/B/C diulang dengan `runtime\python\python.exe -m latih.eksperimen_abc latih`
+lalu `... ukur` (butuh dataset di `D:\sahabat-data`). Dataset tidak disertakan karena ukuran dan lisensinya; unduh dari sumber aslinya
 (lihat [Sumber data](#sumber-data)). Contoh memutar ulang rekaman uji dengan ambang lain:
 
 ```bash
