@@ -13,6 +13,7 @@
   let recording = false;   // perekam uji menyala (aplikasi dinyalakan dengan --rekam)
   let wordsStatus = "memuat";   // keadaan pendengar kata kasar
   let flipped = false;          // gambar kamera dibalik kiri-kanan
+  let remote = false;           // halaman dibuka dari HP / laptop lain: hanya melihat, bukan mengatur
   let lastNoticeSeq = null;
   let markTimer = null;
   const VOLUME_KEY = "sahabat-volume";
@@ -100,6 +101,10 @@
     if (m.devices) document.dispatchEvent(new CustomEvent("sahabat-devices", { detail: m.devices }));
     if (m.riwayat) document.dispatchEvent(new CustomEvent("sahabat-riwayat", { detail: m.riwayat }));
     if ("zona" in m) document.dispatchEvent(new CustomEvent("sahabat-zona", { detail: m.zona }));
+    if (m.jaringan) document.dispatchEvent(new CustomEvent("sahabat-jaringan", { detail: m.jaringan }));
+    remote = m.lokal === false;
+    document.body.classList.toggle("remote", remote);
+    $("remote-chip").hidden = !remote;
     bar = m.bar;
     document.body.dataset.bar = m.bar;
     $("bar-text").textContent = m.text;
@@ -146,6 +151,12 @@
     ws.onclose = () => {
       $("reconnect").hidden = false;
       sirenOff();
+      if (remote) {
+        // HP / laptop lain: kode akses diganti atau jaringan lokal dimatikan -> kembali ke halaman kode akses
+        fetch("/api/ping", { cache: "no-store" })
+          .then((r) => { if (r.status === 401 || r.status === 403) location.reload(); })
+          .catch(() => {});
+      }
       setTimeout(connect, 1000);
     };
     ws.onerror = () => ws.close();
@@ -171,7 +182,7 @@
 
   // Hidup/mati pendengar kata kasar. Mati berarti mikrofonnya dilepas di sisi aplikasi.
   function toggleWords() {
-    if (wordsStatus === "tidak_tersedia") return;
+    if (wordsStatus === "tidak_tersedia" || remote) return;
     fetch("/api/kata", { method: "POST", headers: { "Content-Type": "application/json" },
                          body: JSON.stringify({ on: wordsStatus === "mati" }) }).catch(() => {});
   }
@@ -180,6 +191,7 @@
 
   // Webcam yang gambarnya tercermin dibalik di aplikasi; layar, perekam, dan deteksi memakai gambar yang sama.
   function toggleFlip() {
+    if (remote) return;
     fetch("/api/cermin", { method: "POST", headers: { "Content-Type": "application/json" },
                            body: JSON.stringify({ on: !flipped }) }).catch(() => {});
   }
@@ -207,7 +219,7 @@
   }
 
   document.addEventListener("keydown", (ev) => {
-    if ($("device-dialog").open || $("history-dialog").open || !$("zone-editor").hidden) return;
+    if ($("device-dialog").open || $("history-dialog").open || $("lan-dialog").open || !$("zone-editor").hidden) return;
     if (recording && started && !ev.repeat && MARKS[ev.code]) { mark(MARKS[ev.code]); return; }
     if (ev.code === "KeyM" && started && !ev.repeat) { toggleWords(); return; }
     if (ev.code === "KeyC" && started && !ev.repeat) { toggleFlip(); return; }

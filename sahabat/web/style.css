@@ -247,3 +247,37 @@ button:focus-visible { outline: 0.5vh solid #ffd43b; outline-offset: 0.3vh; }
 .volume-row { display: flex; align-items: center; gap: 12px; }
 #volume { flex: 1; accent-color: var(--green); height: 28px; }
 #volume-value { font-weight: 400; color: #ccd5df; }
+
+/* ---- Jaringan lokal ---- */
+#lan { font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+#lan[data-on="1"] { background: var(--green); }
+#remote-chip { font-size: 2.2vh; padding: 0.6vh 1.4vw; border-radius: 999px; background: #1d4ed8; color: #fff; }
+body.remote #devices, body.remote #zone, body.remote #flip, body.remote #lan, body.remote #start-devices,
+body.remote #clips-toggle { display: none !important; }
+body.remote #words { cursor: default; }
+#lan-dialog {
+  width: min(760px, 95vw); max-height: 90vh; overflow-y: auto;
+  border: 1px solid #536174; border-radius: 16px; padding: 20px 24px;
+  background: #17212e; color: #fff; box-shadow: 0 20px 70px #0009; font-size: 16px;
+}
+#lan-dialog::backdrop { background: #000b; }
+#lan-dialog p { line-height: 1.5; color: #ccd5df; }
+#lan-dialog button { font-size: 15px; padding: 10px 16px; border-radius: 8px; background: #303944; color: #fff; }
+#lan-dialog #lan-toggle[data-on="1"] { background: var(--green); }
+.lan-grid { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; margin-top: 16px; }
+#lan-qr { width: 220px; height: 220px; background: #fff; border-radius: 10px; image-rendering: pixelated; }
+#lan-urls { margin: 0 0 8px; padding-left: 18px; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+#lan-code { font-size: 34px; font-weight: 800; letter-spacing: 6px; color: #ffd43b !important; margin: 4px 0 8px; }
+.lan-step { margin: 0 0 6px; }
+.lan-note { font-size: 13px; }
+#lan-message { min-height: 22px; font-size: 14px; }
+@media (max-width: 640px) { .lan-grid { grid-template-columns: 1fr; } }
+
+/* ---- Layar sempit (HP): baris atas boleh turun ke baris kedua, tulisan tidak terlipat ---- */
+#top-row { flex-wrap: wrap; right: 1.5vw; }
+#top-row > * { white-space: nowrap; }
+@media (max-width: 700px) {
+  #top-row { gap: 6px; }
+  #top-row > *, #top-row button { font-size: 13px !important; padding: 5px 10px !important; }
+  #bar-buttons button { font-size: 16px; padding: 10px 14px; }
+}

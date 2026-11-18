@@ -83,8 +83,15 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | **Perangkat** | Memilih kamera, mikrofon, video cadangan, dan volume alarm (ada tombol **Coba bunyi**) |
 | **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
 | **Zona** | Menggambar area yang dipantau; orang yang titik tengah badannya di luar zona tidak dinilai |
+| **HP / laptop lain** | Membuka layar ini dari HP atau laptop lain di WiFi yang sama (kode QR + kode akses) |
 | **Kata kasar** atau tombol **M** | Menghidupkan / mematikan peringatan kata kasar |
 | **Balik kiri-kanan** atau tombol **C** | Membalik gambar kamera |
+
+**Buka di HP atau laptop lain.** Tekan **HP / laptop lain**, lalu nyalakan **Jaringan lokal**. Pindai kode QR dengan
+kamera HP (atau buka alamat yang tertulis dan ketik kode aksesnya). HP harus tersambung ke WiFi yang sama dengan
+laptop SAHABAT. Dari HP, guru bisa melihat layar, mendengar alarm, menekan **Sudah diperiksa**, dan membuka
+**Riwayat**; pengaturan tetap hanya dari laptop SAHABAT. Pertama kali dinyalakan, Windows bisa menanyakan izin
+jaringan untuk Python: pilih **Izinkan akses**. **Ganti kode akses** langsung memutus semua layar lain.
 
 **Video cadangan.** Bila kamera bermasalah saat demo, buka **Perangkat**, tekan **Tambah video…** (atau salin video
 ke folder `video/` lalu **Cari ulang**), pilih videonya di daftar Kamera, lalu **Terapkan**. Video diputar berulang
@@ -231,6 +238,8 @@ runtime\python\python.exe -m latih.putar data\rekaman\<folder-rekaman> --set vio
   3 detik sesudah, dengan kerangka tubuh) di `data/riwayat`, hanya di laptop itu sendiri, dan terhapus otomatis
   setelah 7 hari. Penyimpanan klip bisa dimatikan dari panel **Riwayat**; kejadian tetap dicatat tanpa video.
 - Log penilaian berupa angka disimpan di `data/log` dan dihapus otomatis setelah 14 hari.
+- Akses dari jaringan lokal mati secara bawaan. Bila dinyalakan, gambar hanya dikirim ke perangkat di jaringan yang
+  sama yang memakai kode akses, tidak pernah ke internet.
 - Sistem tidak mengenali wajah atau identitas. Nomor orang hanya berlaku selama orang itu terlihat.
 - Mode rekam uji menyimpan video; pakai hanya dengan izin semua orang yang terekam.
 

@@ -24,7 +24,7 @@ VIDEO_EXTENSIONS = (".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".m4v")
 _SETTINGS_LOCK = threading.RLock()
 
 LOCAL_FIELDS = ("imgsz", "tuned_for", "slow", "port", "camera", "words_enabled", "microphone",
-                "camera_flip", "clips_enabled", "zone")
+                "camera_flip", "clips_enabled", "zone", "lan_enabled", "lan_code")
 
 
 @dataclass
@@ -152,6 +152,10 @@ class Config:
     clip_keep_days: float = 7.0       # catatan dan klip dihapus otomatis setelah sekian hari
     # zona pantau: titik [x, y] ternormalisasi (0..1); None = seluruh gambar. Digambar di layar, diingat per laptop.
     zone: list | None = None
+    # layar dari HP / laptop lain di WiFi yang sama (sahabat/jaringan.py); mati secara bawaan
+    lan_enabled: bool = False
+    lan_port: int = 8770
+    lan_code: str | None = None       # kode akses; dibuat sekali lalu diingat per laptop
 
 
 def load(path: Path) -> Config:

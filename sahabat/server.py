@@ -5,16 +5,18 @@ import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from .config import DATA_DIR, MODELS_DIR, SETTINGS_PATH, WORDS_PATH, Config, load
 from .engine import SLOW_TEXT, Engine
+from .jaringan import COOKIE, is_local, qr_png
 from .listener import STATUS_LABEL, Listener
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 VIDEO_GAP_S = 0.05        # paling cepat 20 frame per detik
+REMOTE_VIDEO_GAP_S = 0.1  # layar jarak jauh: paling cepat 10 frame per detik, hemat WiFi
 STATE_GAP_S = 0.2
 VIOLENCE_MODEL = MODELS_DIR / "violence_model.joblib"
 FALL_MODEL = MODELS_DIR / "fall_model.joblib"
@@ -95,6 +97,11 @@ def open_folder(folder: Path) -> None:
     os.startfile(str(folder))        # noqa: S606 - hanya folder aplikasi sendiri
 
 
+def remember_lan(enabled: bool, code: str) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, lan_enabled=bool(enabled), lan_code=code)
+
+
 def remember_zone(zone) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, zone=[list(p) for p in zone] if zone else None)
@@ -110,37 +117,156 @@ def _list_riwayat(riwayat) -> list[dict]:
     return riwayat.list()
 
 
-def create_app(engine, listener=None, inputs=None) -> FastAPI:
+def _local_only(method: str, path: str) -> bool:
+    """Pengaturan yang hanya boleh diubah dari laptop SAHABAT sendiri, bukan dari HP atau laptop lain."""
+    if path.startswith("/api/jaringan"):
+        return True
+    return (method, path) in {
+        ("GET", "/api/perangkat"), ("POST", "/api/perangkat"), ("POST", "/api/video"), ("POST", "/api/video/folder"),
+        ("POST", "/api/zona"), ("POST", "/api/riwayat/klip"), ("POST", "/api/cermin"), ("POST", "/api/kata"),
+        ("POST", "/api/tanda")}
+
+
+LOGIN_STYLE = (
+    "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0f15;"
+    "color:#fff;font-family:'Segoe UI',system-ui,sans-serif}form{width:min(360px,90vw);text-align:center}"
+    "input{width:100%;box-sizing:border-box;font-size:28px;letter-spacing:6px;text-align:center;padding:12px;"
+    "border-radius:10px;border:1px solid #536174;text-transform:uppercase}button{margin-top:14px;width:100%;"
+    "font-size:20px;padding:12px;border:0;border-radius:10px;background:#17914a;color:#fff;font-weight:700}"
+    "p{color:#ccd5df;line-height:1.5}.err{color:#ff8a80}")
+
+
+def _login_page(message: str = "") -> str:
+    note = '<p class="err">' + message + "</p>" if message else ""
+    return ('<!doctype html><html lang="id"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1"><title>SAHABAT Sekolah</title>'
+            "<style>" + LOGIN_STYLE + "</style></head><body>"
+            '<form method="get" action="/"><h1>SAHABAT Sekolah</h1>'
+            "<p>Masukkan kode akses yang tampil di laptop SAHABAT (tombol <b>HP / laptop lain</b>).</p>" + note +
+            '<input name="kode" autocomplete="off" autofocus maxlength="12" aria-label="Kode akses">'
+            '<button type="submit">Buka layar</button></form></body></html>')
+
+
+def create_app(engine, listener=None, inputs=None, lan=None) -> FastAPI:
     if inputs is None and getattr(engine, "source", None) is not None:
         from .input_control import InputDevices
         inputs = InputDevices(engine, listener)
     app = FastAPI(title="SAHABAT Sekolah", docs_url=None, redoc_url=None, openapi_url=None)
     app.mount("/static", _FreshStaticFiles(directory=WEB_DIR), name="static")
 
+    def remote_allowed(cookie: str | None) -> bool:
+        return lan is not None and lan.enabled and lan.check(cookie)
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        """Laptop SAHABAT sendiri bebas. Perangkat lain butuh jaringan lokal hidup dan kode akses yang benar."""
+        host = request.client.host if request.client else None
+        if is_local(host):
+            return await call_next(request)
+        if lan is None or not lan.enabled:
+            return Response("Akses dari jaringan lokal sedang dimatikan.", status_code=403,
+                            media_type="text/plain; charset=utf-8")
+        code = request.query_params.get("kode")
+        if code is not None and request.url.path == "/":
+            if not lan.check(code):
+                return HTMLResponse(_login_page("Kode akses salah. Periksa lagi di laptop SAHABAT."), status_code=403)
+            response = RedirectResponse("/", status_code=303)
+            response.set_cookie(COOKIE, lan.code, max_age=30 * 86400, httponly=True, samesite="lax")
+            return response
+        if not lan.check(request.cookies.get(COOKIE)):
+            if request.url.path == "/":
+                return HTMLResponse(_login_page(), status_code=401)
+            return JSONResponse({"ok": False, "error": "Butuh kode akses."}, status_code=401)
+        if _local_only(request.method, request.url.path):
+            return JSONResponse({"ok": False, "error": "Pengaturan hanya bisa diubah dari laptop SAHABAT."},
+                                status_code=403)
+        return await call_next(request)
+
     @app.get("/")
     async def index():
         return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
 
     @app.get("/video")
-    async def video():
+    async def video(request: Request):
+        gap = VIDEO_GAP_S if is_local(request.client.host if request.client else None) else REMOTE_VIDEO_GAP_S
+
         async def frames():
             while True:
                 jpeg = await run_in_threadpool(engine.latest_jpeg)
                 if jpeg:
                     yield mjpeg_chunk(jpeg)
-                await asyncio.sleep(VIDEO_GAP_S)
+                await asyncio.sleep(gap)
         return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame",
                                  headers=NO_CACHE)
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket):
+        local = is_local(socket.client.host if socket.client else None)
+        if not local and not remote_allowed(socket.cookies.get(COOKIE)):
+            await socket.close(code=1008)
+            return
         await socket.accept()
+        if not local:
+            lan.viewers += 1
         try:
             while True:
-                await socket.send_json(_state(engine, listener, inputs))
+                if not local and not remote_allowed(socket.cookies.get(COOKIE)):
+                    await socket.close(code=1008)                  # kode diganti atau jaringan dimatikan
+                    return
+                state = _state(engine, listener, inputs)
+                state["lokal"] = local
+                if local and lan is not None:
+                    state["jaringan"] = {"hidup": lan.enabled, "penonton": lan.viewers}
+                await socket.send_json(state)
                 await asyncio.sleep(STATE_GAP_S)
         except (WebSocketDisconnect, RuntimeError):
             pass
+        finally:
+            if not local:
+                lan.viewers = max(0, lan.viewers - 1)
+
+    @app.get("/api/jaringan")
+    async def lan_status():
+        if lan is None:
+            return JSONResponse({"ok": False, "error": "Jaringan lokal tidak tersedia."}, status_code=503)
+        return {"ok": True, **lan.status()}
+
+    @app.get("/api/jaringan/qr.png")
+    async def lan_qr():
+        urls = lan.urls() if lan is not None else []
+        if not urls:
+            return JSONResponse({"ok": False, "error": "Jaringan lokal mati."}, status_code=404)
+        png = await run_in_threadpool(qr_png, f"{urls[0]}?kode={lan.code}")
+        return Response(png, media_type="image/png", headers=NO_CACHE)
+
+    @app.post("/api/jaringan")
+    async def lan_toggle(request: Request):
+        if lan is None:
+            return JSONResponse({"ok": False, "error": "Jaringan lokal tidak tersedia."}, status_code=503)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        on = body.get("hidup") if isinstance(body, dict) else None
+        if not isinstance(on, bool):
+            return JSONResponse({"ok": False, "error": "Kirim hidup: true/false."}, status_code=400)
+        status = await run_in_threadpool(lan.set_enabled, on)
+        try:
+            await run_in_threadpool(remember_lan, lan.enabled, lan.code)
+        except OSError:
+            pass
+        return {"ok": not status["galat"], **status}
+
+    @app.post("/api/jaringan/kode")
+    async def lan_new_code():
+        if lan is None:
+            return JSONResponse({"ok": False, "error": "Jaringan lokal tidak tersedia."}, status_code=503)
+        lan.regenerate()
+        try:
+            await run_in_threadpool(remember_lan, lan.enabled, lan.code)
+        except OSError:
+            pass
+        return {"ok": True, **lan.status()}
 
     @app.post("/api/ack")
     async def ack():

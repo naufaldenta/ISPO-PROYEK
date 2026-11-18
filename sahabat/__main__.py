@@ -171,8 +171,22 @@ def main() -> int:
         print(f"Peringatan: pendengar kata kasar tidak bisa dinyalakan ({e}); bagian kamera tetap jalan.")
         listener = None
     url = f"http://127.0.0.1:{cfg.port}/"
-    server = uvicorn.Server(uvicorn.Config(create_app(engine, listener), host="127.0.0.1", port=cfg.port,
-                                           log_level="warning"))
+    from .jaringan import LanServer
+    lan = LanServer(cfg.lan_port, cfg.lan_code)
+    if lan.code != cfg.lan_code:
+        try:
+            update_local(SETTINGS_PATH, lan_code=lan.code)
+        except OSError:
+            pass
+    app = create_app(engine, listener, lan=lan)
+    lan.app = app
+    if cfg.lan_enabled:
+        lan.set_enabled(True)
+        if lan.enabled:
+            print("Jaringan lokal HIDUP: buka " + ", ".join(lan.urls()) + f" di HP / laptop lain (kode {lan.code}).")
+        else:
+            print("Peringatan: " + lan.error)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=cfg.port, log_level="warning"))
 
     def _open_when_ready() -> None:
         for _ in range(100):
@@ -196,6 +210,7 @@ def main() -> int:
     try:
         server.run(sockets=[sock])
     finally:
+        lan.stop()
         if listener is not None:
             listener.stop()
         engine.stop()

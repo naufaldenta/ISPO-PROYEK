@@ -16,6 +16,8 @@
     <button id="devices" type="button">Perangkat</button>
     <button id="history" type="button" hidden>Riwayat <span id="history-count" hidden>0</span></button>
     <button id="zone" type="button" hidden>Zona</button>
+    <button id="lan" type="button" hidden>HP / laptop lain</button>
+    <span id="remote-chip" hidden>Layar jarak jauh</span>
   </div>
   <div id="slow" hidden></div>
   <div id="reconnect" hidden>Menyambung ulang…</div>
@@ -111,9 +113,36 @@
     </div>
   </div>
 
+  <dialog id="lan-dialog" aria-labelledby="lan-title">
+    <div class="history-head">
+      <h2 id="lan-title">Buka di HP / laptop lain</h2>
+      <button id="lan-close" type="button">Tutup</button>
+    </div>
+    <p>Guru bisa melihat layar ini, mendengar alarm, menekan <b>Sudah diperiksa</b>, dan membuka Riwayat dari HP atau
+      laptop lain yang tersambung ke <b>WiFi yang sama</b>. Pengaturan tetap hanya dari laptop ini.</p>
+    <button id="lan-toggle" type="button">Jaringan lokal: mati</button>
+    <div id="lan-on" hidden>
+      <div class="lan-grid">
+        <img id="lan-qr" alt="Kode QR untuk membuka layar SAHABAT di HP">
+        <div>
+          <p class="lan-step">1. Pindai kode QR dengan kamera HP, atau buka alamat ini di browser:</p>
+          <ul id="lan-urls"></ul>
+          <p class="lan-step">2. Bila diminta, masukkan kode akses:</p>
+          <p id="lan-code">--------</p>
+          <p id="lan-viewers">Belum ada layar lain yang tersambung.</p>
+          <button id="lan-new-code" type="button">Ganti kode akses</button>
+        </div>
+      </div>
+      <p class="lan-note">Pertama kali dinyalakan, Windows bisa menanyakan izin jaringan untuk Python: pilih
+        <b>Izinkan akses</b> (jaringan pribadi). Mengganti kode akses langsung memutus semua layar lain.</p>
+    </div>
+    <p id="lan-message" role="status" aria-live="polite"></p>
+  </dialog>
+
   <script src="/static/app.js"></script>
   <script src="/static/devices.js"></script>
   <script src="/static/history.js"></script>
   <script src="/static/zone.js"></script>
+  <script src="/static/lan.js"></script>
 </body>
 </html>

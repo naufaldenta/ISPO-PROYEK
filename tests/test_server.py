@@ -69,7 +69,8 @@ def test_ws_sends_state_with_exact_text(client, stub):
     with client.websocket_connect("/ws") as ws:
         m = ws.receive_json()
     assert m["text"] == "INDIKASI KEKERASAN TERDETEKSI" and m["alarm_seq"] == 2 and m["people"] == 2
-    assert set(m) == {"bar", "text", "fps", "people", "slow", "slow_text", "alarm_seq", "recording", "words", "flip"}
+    assert set(m) == {"bar", "text", "fps", "people", "slow", "slow_text", "alarm_seq", "recording", "words", "flip",
+                      "lokal"}
 
 
 def test_ws_slow_text_only_when_slow(client, stub):
