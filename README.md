@@ -69,6 +69,8 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 1. Setelah `Mulai SAHABAT.bat` dijalankan, browser terbuka sendiri dalam mode layar penuh.
 2. Klik **Mulai**. Browser hanya mengizinkan bunyi alarm setelah ada satu klik.
 3. Arahkan kamera agar **seluruh badan** orang terlihat, idealnya dari jarak **3–4 meter**.
+4. Di tempat ramai (misalnya stan pameran), tekan **Zona** lalu klik sudut-sudut area peragaan. Pengunjung yang
+   lewat di luar zona tidak akan memicu alarm. Tandai batas zona di lantai dengan lakban.
 
 | Tampilan / tombol | Fungsi |
 |---|---|
@@ -80,6 +82,7 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | **Senyap** | Mematikan bunyi alarm |
 | **Perangkat** | Memilih kamera dan mikrofon |
 | **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
+| **Zona** | Menggambar area yang dipantau; orang yang titik tengah badannya di luar zona tidak dinilai |
 | **Kata kasar** atau tombol **M** | Menghidupkan / mematikan peringatan kata kasar |
 | **Balik kiri-kanan** atau tombol **C** | Membalik gambar kamera |
 

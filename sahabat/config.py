@@ -22,7 +22,7 @@ WORDS_PATH = APP_DIR / "kata-kasar.txt"       # daftar kata kasar; disunting sek
 _SETTINGS_LOCK = threading.RLock()
 
 LOCAL_FIELDS = ("imgsz", "tuned_for", "slow", "port", "camera", "words_enabled", "microphone",
-                "camera_flip", "clips_enabled")
+                "camera_flip", "clips_enabled", "zone")
 
 
 @dataclass
@@ -148,6 +148,8 @@ class Config:
     clip_before_s: float = 5.0        # klip mulai sekian detik sebelum kejadian
     clip_after_s: float = 3.0         # ... dan berakhir sekian detik sesudahnya
     clip_keep_days: float = 7.0       # catatan dan klip dihapus otomatis setelah sekian hari
+    # zona pantau: titik [x, y] ternormalisasi (0..1); None = seluruh gambar. Digambar di layar, diingat per laptop.
+    zone: list | None = None
 
 
 def load(path: Path) -> Config:

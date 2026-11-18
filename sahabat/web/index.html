@@ -15,6 +15,7 @@
     <button id="flip" type="button" title="Tombol C">Balik kiri-kanan: mati</button>
     <button id="devices" type="button">Perangkat</button>
     <button id="history" type="button" hidden>Riwayat <span id="history-count" hidden>0</span></button>
+    <button id="zone" type="button" hidden>Zona</button>
   </div>
   <div id="slow" hidden></div>
   <div id="reconnect" hidden>Menyambung ulang…</div>
@@ -81,8 +82,26 @@
     </div>
   </dialog>
 
+  <div id="zone-editor" hidden>
+    <svg id="zone-svg" aria-label="Gambar kamera; klik untuk menambah titik zona"></svg>
+    <div id="zone-panel" role="dialog" aria-labelledby="zone-title">
+      <h2 id="zone-title">Zona pantau</h2>
+      <p>Klik sudut-sudut area yang dipantau, minimal 3 titik. Orang yang titik tengah badannya di luar zona
+        tidak dinilai. Tandai batasnya di lantai dengan lakban supaya pengunjung tidak masuk tanpa sengaja.</p>
+      <p id="zone-count">0 titik</p>
+      <div class="zone-actions">
+        <button id="zone-undo" type="button">Hapus titik terakhir</button>
+        <button id="zone-whole" type="button">Seluruh gambar</button>
+        <button id="zone-cancel" type="button">Batal</button>
+        <button id="zone-save" type="button" disabled>Simpan zona</button>
+      </div>
+      <p id="zone-message" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
   <script src="/static/devices.js"></script>
   <script src="/static/history.js"></script>
+  <script src="/static/zone.js"></script>
 </body>
 </html>

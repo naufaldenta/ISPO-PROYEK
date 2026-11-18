@@ -370,3 +370,56 @@ def test_stop_closes_the_riwayat():
     r = FakeRiwayat()
     Engine(Config(), None, FakePose(lambda t: []), riwayat=r).stop()
     assert r.closed
+
+
+LEFT_HALF = [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]
+
+
+def shifted(script, dx):
+    """Adegan yang sama, digeser ke kanan sejauh dx piksel."""
+    from sahabat.types import Person
+
+    def moved(t):
+        return [Person(p.track_id, p.kp + np.array([dx, 0], dtype=np.float32), p.conf,
+                       (p.box[0] + dx, p.box[1], p.box[2] + dx, p.box[3])) for p in script(t)]
+    return moved
+
+
+def test_fall_outside_the_zone_is_not_assessed_and_drawn_faint():
+    from dataclasses import replace
+    script = shifted(fall_script, 400)                   # jatuh di separuh kanan gambar
+    e = Engine(replace(Config(), zone=LEFT_HALF), None, FakePose(script))
+    s = run(e, seconds=6.0)
+    assert (s.bar, s.alarm_seq, s.people) == ("aman", 0, 0)
+    assert [o.color for o in s.overlays] == ["out"] and s.overlays[0].label == ""
+
+
+def test_same_fall_inside_the_zone_still_alarms():
+    from dataclasses import replace
+    e = Engine(replace(Config(), zone=LEFT_HALF), None, FakePose(fall_script))
+    assert run(e, seconds=6.0).bar == "jatuh"
+
+
+def test_set_zone_validates_and_none_means_whole_picture():
+    import pytest
+    e = make_engine(lambda t: [])
+    assert e.zone is None
+    assert e.set_zone(LEFT_HALF) == tuple(tuple(p) for p in [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]])
+    with pytest.raises(ValueError):
+        e.set_zone([[0, 0], [1, 1]])
+    assert e.zone is not None                             # zona lama tetap berlaku bila yang baru ditolak
+    assert e.set_zone(None) is None and e.zone is None
+
+
+def test_broken_saved_zone_falls_back_to_whole_picture():
+    from dataclasses import replace
+    assert Engine(replace(Config(), zone=[[0, 0]]), None, FakePose(lambda t: [])).zone is None
+
+
+def test_screen_picture_shows_the_zone():
+    from dataclasses import replace
+    e = Engine(replace(Config(), zone=LEFT_HALF), None, FakePose(lambda t: []))
+    e.step(0.0, np.full((480, 640, 3), 200, dtype=np.uint8))
+    import cv2
+    img = cv2.imdecode(np.frombuffer(e.latest_jpeg(), np.uint8), cv2.IMREAD_COLOR)
+    assert img[240, 600].mean() < 150 and img[240, 100].mean() > 180     # kanan (di luar zona) digelapkan

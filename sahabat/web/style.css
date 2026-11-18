@@ -217,3 +217,26 @@ button:focus-visible { outline: 0.5vh solid #ffd43b; outline-offset: 0.3vh; }
 #history-note { margin: 0; font-size: 13px; color: #b7c7da; }
 #history-dialog #clips-toggle[data-on="1"] { background: var(--green); }
 @media (max-width: 760px) { .history-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); } }
+
+/* ---- Zona pantau ---- */
+#zone { font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+#zone-editor { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
+#zone-svg { position: fixed; pointer-events: auto; cursor: crosshair; outline: 2px dashed #ffd43b; }
+#zone-svg .zone-shade { fill: rgba(0, 0, 0, 0.45); }
+#zone-svg .zone-line { fill: rgba(255, 212, 59, 0.12); stroke: #ffd43b; stroke-width: 3; stroke-linejoin: round; }
+#zone-svg polyline.zone-line { fill: none; }
+#zone-svg .zone-dot { fill: #ffd43b; stroke: #1a1a1a; stroke-width: 2; }
+#zone-svg .zone-dot.first { fill: #fff; }
+#zone-panel {
+  position: fixed; top: 2vh; right: 1.5vw; width: min(420px, 92vw); pointer-events: auto;
+  background: rgba(23, 33, 46, 0.95); border: 1px solid #536174; border-radius: 14px; padding: 18px 20px;
+  font-size: 15px; box-shadow: 0 16px 50px #0009;
+}
+#zone-panel h2 { margin: 0 0 8px; font-size: 22px; }
+#zone-panel p { margin: 0 0 10px; line-height: 1.5; color: #ccd5df; }
+#zone-count { font-weight: 700; color: #ffd43b !important; }
+.zone-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.zone-actions button { font-size: 14px; padding: 9px 14px; border-radius: 8px; background: #303944; color: #fff; }
+.zone-actions button:disabled { opacity: 0.5; cursor: default; }
+#zone-save { background: var(--green); }
+#zone-message { min-height: 22px; margin: 10px 0 0 !important; font-size: 14px; }

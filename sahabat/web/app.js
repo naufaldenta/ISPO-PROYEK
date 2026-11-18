@@ -67,6 +67,7 @@
   function render(m) {
     if (m.devices) document.dispatchEvent(new CustomEvent("sahabat-devices", { detail: m.devices }));
     if (m.riwayat) document.dispatchEvent(new CustomEvent("sahabat-riwayat", { detail: m.riwayat }));
+    if ("zona" in m) document.dispatchEvent(new CustomEvent("sahabat-zona", { detail: m.zona }));
     bar = m.bar;
     document.body.dataset.bar = m.bar;
     $("bar-text").textContent = m.text;
@@ -174,7 +175,7 @@
   }
 
   document.addEventListener("keydown", (ev) => {
-    if ($("device-dialog").open || $("history-dialog").open) return;
+    if ($("device-dialog").open || $("history-dialog").open || !$("zone-editor").hidden) return;
     if (recording && started && !ev.repeat && MARKS[ev.code]) { mark(MARKS[ev.code]); return; }
     if (ev.code === "KeyM" && started && !ev.repeat) { toggleWords(); return; }
     if (ev.code === "KeyC" && started && !ev.repeat) { toggleFlip(); return; }

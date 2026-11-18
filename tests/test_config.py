@@ -56,7 +56,7 @@ def test_settings_file_holds_only_this_laptops_choices(tmp_path):
     save(Config(imgsz=416, tuned_for="X", slow=True, port=9000, camera=1, fall_stay_s=9.0), p)
     assert set(json.loads(p.read_text(encoding="utf-8"))) == {"imgsz", "tuned_for", "slow", "port", "camera",
                                                                  "words_enabled", "microphone", "camera_flip",
-                                                                 "clips_enabled"}
+                                                                 "clips_enabled", "zone"}
     got = load(p)
     assert (got.imgsz, got.tuned_for, got.slow, got.port, got.camera) == (416, "X", True, 9000, 1)
     assert got.fall_stay_s == Config().fall_stay_s
@@ -82,3 +82,10 @@ def test_clip_settings_defaults_and_choice_is_per_laptop(tmp_path):
     p = tmp_path / "p.json"
     save(Config(clips_enabled=False), p)
     assert load(p).clips_enabled is False
+
+
+def test_zone_is_remembered_per_laptop(tmp_path):
+    p = tmp_path / "p.json"
+    assert Config().zone is None
+    save(Config(zone=[[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]]), p)
+    assert load(p).zone == [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]]

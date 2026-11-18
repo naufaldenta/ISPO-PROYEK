@@ -278,3 +278,45 @@ def test_without_history_the_page_is_told_so(client):
 def test_page_has_the_history_button_and_panel(client):
     text = client.get("/").text
     assert 'id="history"' in text and 'id="history-dialog"' in text and 'id="history-player"' in text
+
+
+class ZoneEngine(StubEngine):
+    def __init__(self):
+        super().__init__()
+        self.zone = None
+
+    def set_zone(self, points):
+        from sahabat.zone import normalize
+        self.zone = normalize(points)
+        return self.zone
+
+
+def test_zone_endpoint_sets_validates_and_remembers(monkeypatch):
+    from sahabat import server
+    saved = []
+    monkeypatch.setattr(server, "remember_zone", lambda z: saved.append(z))
+    eng = ZoneEngine()
+    tri = [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]]
+    with TestClient(create_app(eng)) as c:
+        with c.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["zona"] is None
+        assert c.post("/api/zona", json={"titik": tri}).json() == {"ok": True, "titik": tri}
+        with c.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["zona"] == tri
+        bad = c.post("/api/zona", json={"titik": [[0, 0], [1, 1]]})
+        assert bad.status_code == 400 and bad.json()["ok"] is False
+        assert c.post("/api/zona", json={}).status_code == 400
+        assert eng.zone is not None                      # zona lama tetap
+        assert c.post("/api/zona", json={"titik": None}).json() == {"ok": True, "titik": None}
+    assert len(saved) == 2 and saved[-1] is None
+
+
+def test_engine_without_zone_support_says_so(client):
+    assert client.post("/api/zona", json={"titik": None}).status_code == 503
+    with client.websocket_connect("/ws") as ws:
+        assert "zona" not in ws.receive_json()
+
+
+def test_page_has_the_zone_button_and_editor(client):
+    text = client.get("/").text
+    assert 'id="zone"' in text and 'id="zone-editor"' in text

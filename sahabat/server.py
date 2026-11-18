@@ -55,12 +55,20 @@ def _state(engine, listener=None, inputs=None) -> dict:
     riwayat = getattr(engine, "riwayat", None)
     if riwayat is not None:
         state["riwayat"] = {"seq": riwayat.seq, "klip": bool(riwayat.keep_clips)}
+    if hasattr(engine, "set_zone"):
+        zone = getattr(engine, "zone", None)
+        state["zona"] = [list(p) for p in zone] if zone else None
     return state
 
 
 def remember_flip(on: bool) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, camera_flip=bool(on))
+
+
+def remember_zone(zone) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, zone=[list(p) for p in zone] if zone else None)
 
 
 def remember_clips(on: bool) -> None:
@@ -181,6 +189,27 @@ def create_app(engine, listener=None, inputs=None) -> FastAPI:
                     await asyncio.sleep(delay)
                 yield mjpeg_chunk(jpeg)
         return StreamingResponse(play(), media_type="multipart/x-mixed-replace; boundary=frame", headers=NO_CACHE)
+
+    @app.post("/api/zona")
+    async def set_zone(request: Request):
+        """Zona pantau dari layar: {"titik": [[x, y], ...]} ternormalisasi, atau {"titik": null} = seluruh gambar."""
+        if not hasattr(engine, "set_zone"):
+            return JSONResponse({"ok": False, "error": "Zona tidak tersedia."}, status_code=503)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or "titik" not in body:
+            return JSONResponse({"ok": False, "error": "Kirim titik zona."}, status_code=400)
+        try:
+            zone = await run_in_threadpool(engine.set_zone, body["titik"])
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        try:
+            await run_in_threadpool(remember_zone, zone)
+        except OSError:
+            pass                                            # tetap berlaku untuk sesi ini
+        return {"ok": True, "titik": [list(p) for p in zone] if zone else None}
 
     @app.post("/api/riwayat/klip")
     async def keep_clips(request: Request):

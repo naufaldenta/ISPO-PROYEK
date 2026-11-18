@@ -22,6 +22,7 @@ from .predlog import PredLog
 from .source import VideoSource
 from .types import SKELETON_EDGES
 from .violence import ViolenceScorer
+from . import zone as zones
 
 BarState = Literal["aman", "jatuh", "kekerasan", "tidak_dinilai", "kamera_terputus"]
 BAR_TEXT: dict[str, str] = {
@@ -35,7 +36,7 @@ SLOW_TEXT = "laptop ini terlalu lambat, deteksi bisa meleset"
 CAMERA_SLOW_TEXT = "kamera hanya mengirim {} gambar per detik (ruangan kurang terang?), deteksi bisa meleset"
 CAMERA_LOST_NOTE = "kamera terputus; alarm sebelumnya belum diperiksa"
 
-_BGR = {"green": (89, 199, 52), "red": (48, 59, 255), "gray": (160, 160, 160)}
+_BGR = {"green": (89, 199, 52), "red": (48, 59, 255), "gray": (160, 160, 160), "out": (125, 125, 125)}
 _DRAW_CONF = 0.5
 _FPS_WINDOW_S = 2.0
 
@@ -45,7 +46,7 @@ class Overlay:
     track_id: int
     kp: np.ndarray
     conf: np.ndarray
-    color: Literal["green", "red", "gray"]
+    color: Literal["green", "red", "gray", "out"]   # out = di luar zona pantau, tidak dinilai
     label: str
 
 
@@ -82,6 +83,7 @@ class Engine:
         self.slow = slow
         self.recorder = recorder       # sahabat.recorder.Recorder; None = tidak merekam
         self.riwayat = riwayat         # sahabat.riwayat.Riwayat; None = tanpa riwayat kejadian
+        self.zone = zones.load(cfg.zone)   # None = seluruh gambar
         self.history = History(cfg)
         self.fall = FallDetector(cfg, fall_model)
         self.gestures = GestureDetector(cfg)
@@ -142,6 +144,7 @@ class Engine:
             self._last_t = t
             scoring_ok = True
             fall_ids, pairs, events, modes = [], [], [], {}
+            people, outside = zones.split(people, self.zone, frame.shape)
             try:
                 if pose_ok:
                     people = self.history.update(t, people)
@@ -168,6 +171,7 @@ class Engine:
                     assessable += 1
                 color = "red" if p.track_id in red else ("gray" if mode == "none" else "green")
                 overlays.append(Overlay(p.track_id, p.kp, p.conf, color, _label(p.track_id, color, mode)))
+            overlays.extend(Overlay(p.track_id, p.kp, p.conf, "out", "") for p in outside)
 
             active = self.alarm.active
             if active is not None:
@@ -230,7 +234,7 @@ class Engine:
         """Frame layar (berkerangka) untuk klip bukti, lalu kejadian baru. Gagal di sini tidak menghentikan alarm."""
         try:
             if self.riwayat.wants_frames:
-                jpeg = annotated_jpeg(frame, overlays, quality=70)
+                jpeg = annotated_jpeg(frame, overlays, quality=70, zone=self.zone)
                 if jpeg is not None:
                     self.riwayat.frame(t, jpeg)
         except Exception:
@@ -274,6 +278,13 @@ class Engine:
     def acknowledge(self) -> bool:
         with self._lock:
             return self.alarm.acknowledge(self._last_t)
+
+    def set_zone(self, points) -> zones.Zone | None:
+        """Zona pantau baru (titik ternormalisasi) atau None untuk seluruh gambar. ValueError bila tidak sah."""
+        zone = zones.normalize(points)
+        with self._lock:
+            self.zone = zone
+        return zone
 
     def mark(self, label: str) -> bool:
         """Tanda adegan dari pencatat, dicatat pada waktu penilaian terakhir. False bila tidak merekam."""
@@ -332,12 +343,13 @@ class Engine:
         if frame is None or (self.source is not None and got is None):
             return annotated_jpeg(np.full((480, 640, 3), 40, dtype=np.uint8), ())
         overlays = snap.overlays if self.source is None or self.source.version == self._input_version else ()
-        return annotated_jpeg(frame, overlays)
+        return annotated_jpeg(frame, overlays, zone=self.zone)
 
 
-def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75) -> bytes | None:
-    """Frame dengan kerangka dan label tiap orang, sebagai JPEG. Frame asli tidak diubah."""
+def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75, zone=None) -> bytes | None:
+    """Frame dengan zona pantau, kerangka, dan label tiap orang, sebagai JPEG. Frame asli tidak diubah."""
     canvas = frame.copy()
+    zones.draw(canvas, zone)
     for ov in overlays:
         _draw(canvas, ov)
     ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, quality])
@@ -346,7 +358,7 @@ def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75) -> bytes | No
 
 def _draw(canvas: np.ndarray, ov: Overlay) -> None:
     color = _BGR[ov.color]
-    thick = 3 if ov.color == "red" else 2
+    thick = 3 if ov.color == "red" else (1 if ov.color == "out" else 2)
     pts = ov.kp
     for a, b in SKELETON_EDGES:
         if ov.conf[a] >= _DRAW_CONF and ov.conf[b] >= _DRAW_CONF:
@@ -355,7 +367,7 @@ def _draw(canvas: np.ndarray, ov: Overlay) -> None:
     seen = [pts[i] for i in range(len(pts)) if ov.conf[i] >= _DRAW_CONF]
     for x, y in seen:
         cv2.circle(canvas, (int(x), int(y)), 3, color, -1, cv2.LINE_AA)
-    if seen:
+    if seen and ov.label:
         top = min(seen, key=lambda p: p[1])
         x = max(4, int(top[0]) - 20)
         y = max(18, int(top[1]) - 12)
