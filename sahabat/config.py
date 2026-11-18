@@ -22,7 +22,7 @@ WORDS_PATH = APP_DIR / "kata-kasar.txt"       # daftar kata kasar; disunting sek
 _SETTINGS_LOCK = threading.RLock()
 
 LOCAL_FIELDS = ("imgsz", "tuned_for", "slow", "port", "camera", "words_enabled", "microphone",
-                "camera_flip")
+                "camera_flip", "clips_enabled")
 
 
 @dataclass
@@ -143,6 +143,11 @@ class Config:
     port: int = 8765
     camera: int | str | None = None   # None = pilih otomatis
     camera_flip: bool = False         # balik kiri-kanan untuk driver yang mengirim gambar tercermin
+    # riwayat kejadian dan klip bukti (data/riwayat/), hanya di laptop ini
+    clips_enabled: bool = True        # tombol di panel Riwayat; pilihan terakhir diingat per laptop
+    clip_before_s: float = 5.0        # klip mulai sekian detik sebelum kejadian
+    clip_after_s: float = 3.0         # ... dan berakhir sekian detik sesudahnya
+    clip_keep_days: float = 7.0       # catatan dan klip dihapus otomatis setelah sekian hari
 
 
 def load(path: Path) -> Config:

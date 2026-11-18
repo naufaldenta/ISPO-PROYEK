@@ -222,3 +222,59 @@ def test_flip_endpoint_without_camera_says_no(client):
 
 def test_page_has_the_flip_button(client):
     assert 'id="flip"' in client.get("/").text
+
+
+def _riwayat(tmp_path, keep_clips=True):
+    from sahabat.riwayat import Riwayat
+    return Riwayat(tmp_path, keep_clips=keep_clips, before_s=0.3, after_s=0.2, background=False,
+                   free_bytes=lambda _: 10 ** 12)
+
+
+def test_history_lists_events_and_says_whether_clips_are_kept(stub, tmp_path):
+    stub.riwayat = _riwayat(tmp_path, keep_clips=False)
+    rec = stub.riwayat.event(1.0, "jatuh", "full", [1])
+    with TestClient(create_app(stub)) as c:
+        body = c.get("/api/riwayat").json()
+        assert body["ok"] is True and body["simpan_klip"] is False and body["hari"] == 7.0
+        assert [(k["id"], k["jenis"], k["klip"]) for k in body["kejadian"]] == [(rec.id, "jatuh", False)]
+        with c.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["riwayat"] == {"seq": 1, "klip": False}
+
+
+def test_history_clip_streams_its_frames_as_mjpeg(stub, tmp_path):
+    r = stub.riwayat = _riwayat(tmp_path)
+    for i in range(4):
+        r.frame(i / 10, b"\xff\xd8frame%d" % i)
+    rec = r.event(0.3, "kekerasan", "full", [1, 2])
+    for i in range(4, 7):
+        r.frame(i / 10, b"\xff\xd8frame%d" % i)
+    with TestClient(create_app(stub)) as c:
+        res = c.get(f"/api/riwayat/{rec.id}/klip")
+        assert res.status_code == 200 and res.headers["content-type"].startswith("multipart/x-mixed-replace")
+        assert res.content.count(b"--frame") == 6 and b"frame0" in res.content and b"frame5" in res.content
+        assert c.get("/api/riwayat/20990101-000000-1/klip").status_code == 404
+        assert c.get("/api/riwayat/..%2Fpengaturan/klip").status_code == 404
+
+
+def test_clip_toggle_changes_and_remembers_the_choice(stub, tmp_path, monkeypatch):
+    from sahabat import server
+    saved = []
+    monkeypatch.setattr(server, "remember_clips", lambda on: saved.append(on))
+    stub.riwayat = _riwayat(tmp_path)
+    with TestClient(create_app(stub)) as c:
+        assert c.post("/api/riwayat/klip", json={"on": False}).json() == {"ok": True, "on": False}
+        assert stub.riwayat.keep_clips is False and saved == [False]
+        for bad in ({}, {"on": "tidak"}, [False]):
+            assert c.post("/api/riwayat/klip", json=bad).json() == {"ok": False}
+
+
+def test_without_history_the_page_is_told_so(client):
+    assert client.get("/api/riwayat").json()["ok"] is False
+    assert client.post("/api/riwayat/klip", json={"on": True}).json() == {"ok": False}
+    with client.websocket_connect("/ws") as ws:
+        assert "riwayat" not in ws.receive_json()
+
+
+def test_page_has_the_history_button_and_panel(client):
+    text = client.get("/").text
+    assert 'id="history"' in text and 'id="history-dialog"' in text and 'id="history-player"' in text

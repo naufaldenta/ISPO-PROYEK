@@ -320,3 +320,53 @@ def test_stop_closes_the_recorder():
 def test_recording_sign_shows_before_the_first_frame():
     e = Engine(Config(), None, FakePose(lambda t: []), recorder=FakeRecorder())
     assert e.snapshot().recording is True                # model masih dimuat, kamera sudah direkam sebentar lagi
+
+
+class FakeRiwayat:
+    def __init__(self, wants=True, fail=False):
+        self.wants_frames = wants
+        self.fail = fail
+        self.frames, self.events, self.closed = [], [], False
+
+    def frame(self, t, jpeg):
+        if self.fail:
+            raise OSError("disk penuh")
+        self.frames.append((t, jpeg))
+
+    def event(self, t, jenis, mode, ids, sumber="model"):
+        self.events.append((t, jenis, mode, tuple(ids), sumber))
+
+    def close(self):
+        self.closed = True
+
+
+def test_riwayat_gets_screen_frames_and_each_new_event():
+    r = FakeRiwayat()
+    e = Engine(Config(), None, FakePose(fall_script), riwayat=r)
+    s = run(e, seconds=6.0)
+    assert s.alarm_seq == 1
+    assert len(r.events) == 1
+    t, jenis, mode, ids, _ = r.events[0]
+    assert (jenis, mode, ids) == ("jatuh", "full", (1,))
+    assert len(r.frames) == len(list(ticks(0.0, 6.0)))
+    assert all(j[:2] == b"\xff\xd8" for _, j in r.frames)          # JPEG
+    assert any(ft == t for ft, _ in r.frames)                    # frame saat kejadian ikut
+
+
+def test_riwayat_without_clips_gets_events_but_no_frames():
+    r = FakeRiwayat(wants=False)
+    run(Engine(Config(), None, FakePose(repeated_punch), riwayat=r), seconds=4.0)
+    assert r.frames == [] and r.events and r.events[0][1] == "kekerasan"
+
+
+def test_riwayat_failure_does_not_stop_the_alarm():
+    r = FakeRiwayat(fail=True)
+    s = run(Engine(Config(), None, FakePose(fall_script), riwayat=r), seconds=6.0)
+    assert s.bar == "jatuh"
+    assert [ev[1] for ev in r.events] == ["jatuh"]               # klip gagal, catatan tetap masuk
+
+
+def test_stop_closes_the_riwayat():
+    r = FakeRiwayat()
+    Engine(Config(), None, FakePose(lambda t: []), riwayat=r).stop()
+    assert r.closed

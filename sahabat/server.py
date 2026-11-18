@@ -52,12 +52,25 @@ def _state(engine, listener=None, inputs=None) -> dict:
             "flip": bool(getattr(getattr(engine, "source", None), "flip", False))}
     if inputs is not None:
         state["devices"] = inputs.status()
+    riwayat = getattr(engine, "riwayat", None)
+    if riwayat is not None:
+        state["riwayat"] = {"seq": riwayat.seq, "klip": bool(riwayat.keep_clips)}
     return state
 
 
 def remember_flip(on: bool) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, camera_flip=bool(on))
+
+
+def remember_clips(on: bool) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, clips_enabled=bool(on))
+
+
+def _list_riwayat(riwayat) -> list[dict]:
+    riwayat.prune()                     # aplikasi bisa menyala berhari-hari: bersihkan juga saat panel dibuka
+    return riwayat.list()
 
 
 def create_app(engine, listener=None, inputs=None) -> FastAPI:
@@ -142,6 +155,51 @@ def create_app(engine, listener=None, inputs=None) -> FastAPI:
     async def ping():
         return {"app": "sahabat"}
 
+    @app.get("/api/riwayat")
+    async def history():
+        riwayat = getattr(engine, "riwayat", None)
+        if riwayat is None or riwayat.disabled:
+            return {"ok": False, "kejadian": [], "simpan_klip": False, "hari": 0}
+        items = await run_in_threadpool(_list_riwayat, riwayat)
+        return {"ok": True, "kejadian": items, "simpan_klip": bool(riwayat.keep_clips),
+                "hari": riwayat.keep_days, "sebelum": riwayat.before_s, "sesudah": riwayat.after_s}
+
+    @app.get("/api/riwayat/{record_id}/klip")
+    async def history_clip(record_id: str):
+        """Klip bukti diputar sekali dengan kecepatan aslinya, lewat MJPEG seperti video langsung."""
+        riwayat = getattr(engine, "riwayat", None)
+        frames = await run_in_threadpool(riwayat.clip, record_id) if riwayat is not None else None
+        if not frames:
+            return JSONResponse({"ok": False, "error": "Klip tidak ada."}, status_code=404)
+
+        async def play():
+            loop = asyncio.get_running_loop()
+            start = loop.time()
+            for t, jpeg in frames:
+                delay = start + t - loop.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                yield mjpeg_chunk(jpeg)
+        return StreamingResponse(play(), media_type="multipart/x-mixed-replace; boundary=frame", headers=NO_CACHE)
+
+    @app.post("/api/riwayat/klip")
+    async def keep_clips(request: Request):
+        """Tombol hidup/mati penyimpanan klip bukti; pilihannya diingat per laptop."""
+        riwayat = getattr(engine, "riwayat", None)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        on = body.get("on") if isinstance(body, dict) else None
+        if riwayat is None or riwayat.disabled or not isinstance(on, bool):
+            return {"ok": False}
+        riwayat.set_keep_clips(on)
+        try:
+            await run_in_threadpool(remember_clips, on)
+        except OSError:
+            pass                                            # tetap berlaku untuk sesi ini
+        return {"ok": True, "on": on}
+
     @app.get("/api/perangkat")
     async def devices():
         if inputs is None:
@@ -177,11 +235,16 @@ def build_engine(cfg: Config, source=None, record: bool = False) -> Engine:
         source = VideoSource(cfg.camera, flip=cfg.camera_flip)
         source.start()
     pose = YoloPose(cfg.imgsz or cfg.imgsz_candidates[-1])
+    from .riwayat import Riwayat
+
     recorder = None
     if record:
         from .recorder import Recorder
         recorder = Recorder(DATA_DIR / "rekaman")
-    return Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, VIOLENCE_MODEL, FALL_MODEL, recorder)
+    riwayat = Riwayat(DATA_DIR / "riwayat", keep_clips=cfg.clips_enabled, before_s=cfg.clip_before_s,
+                      after_s=cfg.clip_after_s, keep_days=cfg.clip_keep_days)
+    return Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, VIOLENCE_MODEL, FALL_MODEL, recorder,
+                  riwayat)
 
 
 def build_listener(cfg: Config, clip_dir: Path | None = None, on_toggle=None) -> Listener:

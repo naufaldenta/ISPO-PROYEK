@@ -55,7 +55,8 @@ def test_settings_file_holds_only_this_laptops_choices(tmp_path):
     p = tmp_path / "p.json"
     save(Config(imgsz=416, tuned_for="X", slow=True, port=9000, camera=1, fall_stay_s=9.0), p)
     assert set(json.loads(p.read_text(encoding="utf-8"))) == {"imgsz", "tuned_for", "slow", "port", "camera",
-                                                                 "words_enabled", "microphone", "camera_flip"}
+                                                                 "words_enabled", "microphone", "camera_flip",
+                                                                 "clips_enabled"}
     got = load(p)
     assert (got.imgsz, got.tuned_for, got.slow, got.port, got.camera) == (416, "X", True, 9000, 1)
     assert got.fall_stay_s == Config().fall_stay_s
@@ -73,3 +74,11 @@ def test_word_settings_defaults_and_local_fields():
 def test_decoder_anti_repetition_can_be_switched_for_comparison():
     c = Config()
     assert (c.speech_no_repeat_ngram, c.speech_repetition_penalty) == (3, 1.1)
+
+
+def test_clip_settings_defaults_and_choice_is_per_laptop(tmp_path):
+    c = Config()
+    assert (c.clips_enabled, c.clip_before_s, c.clip_after_s, c.clip_keep_days) == (True, 5.0, 3.0, 7.0)
+    p = tmp_path / "p.json"
+    save(Config(clips_enabled=False), p)
+    assert load(p).clips_enabled is False

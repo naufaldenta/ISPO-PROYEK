@@ -14,6 +14,7 @@
     <button id="words" type="button" data-status="memuat" title="Tombol M">Kata kasar: memuat…</button>
     <button id="flip" type="button" title="Tombol C">Balik kiri-kanan: mati</button>
     <button id="devices" type="button">Perangkat</button>
+    <button id="history" type="button" hidden>Riwayat <span id="history-count" hidden>0</span></button>
   </div>
   <div id="slow" hidden></div>
   <div id="reconnect" hidden>Menyambung ulang…</div>
@@ -58,7 +59,30 @@
     </form>
   </dialog>
 
+  <dialog id="history-dialog" aria-labelledby="history-title">
+    <div class="history-head">
+      <h2 id="history-title">Riwayat kejadian</h2>
+      <button id="history-close" type="button">Tutup</button>
+    </div>
+    <div class="history-body">
+      <div class="history-list-wrap">
+        <ul id="history-list"></ul>
+        <p id="history-empty" hidden>Belum ada kejadian tercatat.</p>
+      </div>
+      <div class="history-view">
+        <img id="history-player" alt="Klip bukti kejadian">
+        <p id="history-caption">Pilih kejadian untuk memutar klip buktinya.</p>
+        <button id="history-replay" type="button" hidden>Putar ulang</button>
+      </div>
+    </div>
+    <div class="history-foot">
+      <button id="clips-toggle" type="button">Simpan klip: hidup</button>
+      <p id="history-note">Klip disimpan hanya di laptop ini dan terhapus otomatis setelah 7 hari.</p>
+    </div>
+  </dialog>
+
   <script src="/static/app.js"></script>
   <script src="/static/devices.js"></script>
+  <script src="/static/history.js"></script>
 </body>
 </html>

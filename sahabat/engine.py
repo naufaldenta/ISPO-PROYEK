@@ -74,13 +74,14 @@ class Engine:
     def __init__(self, cfg: Config, source: VideoSource | None, pose: PoseProvider,
                  log: PredLog | None = None, slow: bool = False,
                  violence_model: Path | None = None, fall_model: Path | None = None,
-                 recorder=None) -> None:
+                 recorder=None, riwayat=None) -> None:
         self.cfg = cfg
         self.source = source           # None hanya untuk uji lewat step()
         self.pose = pose
         self.log = log
         self.slow = slow
         self.recorder = recorder       # sahabat.recorder.Recorder; None = tidak merekam
+        self.riwayat = riwayat         # sahabat.riwayat.Riwayat; None = tanpa riwayat kejadian
         self.history = History(cfg)
         self.fall = FallDetector(cfg, fall_model)
         self.gestures = GestureDetector(cfg)
@@ -194,6 +195,8 @@ class Engine:
 
         if self.recorder is not None:
             self.recorder.write(t, frame)
+        if self.riwayat is not None:
+            self._feed_riwayat(t, frame, snap.overlays, events)
         if self.log is not None:
             self.log.write({
                 "t": round(t, 3),
@@ -222,6 +225,21 @@ class Engine:
             if x <= 0.12 * width or x >= 0.88 * width or y >= 0.84 * height or moving:
                 out.add(i)
         return out
+
+    def _feed_riwayat(self, t, frame, overlays, events) -> None:
+        """Frame layar (berkerangka) untuk klip bukti, lalu kejadian baru. Gagal di sini tidak menghentikan alarm."""
+        try:
+            if self.riwayat.wants_frames:
+                jpeg = annotated_jpeg(frame, overlays, quality=70)
+                if jpeg is not None:
+                    self.riwayat.frame(t, jpeg)
+        except Exception:
+            self._report("klip bukti")
+        try:
+            for e in events:
+                self.riwayat.event(t, "jatuh" if e.kind == "fall" else "kekerasan", e.mode, e.ids, e.source)
+        except Exception:
+            self._report("riwayat")
 
     def _camera_lost_snapshot(self) -> Snapshot:
         """Kamera terputus. Alarm yang belum diperiksa tetap merah dan tetap bisa diperiksa."""
@@ -280,6 +298,8 @@ class Engine:
             self.log.close()
         if self.recorder is not None:
             self.recorder.close()
+        if self.riwayat is not None:
+            self.riwayat.close()
 
     def _run(self) -> None:
         period = 1.0 / self.cfg.rate_hz
@@ -310,14 +330,18 @@ class Engine:
         snap = self._snapshot
         frame = got[1] if got is not None else self._frame
         if frame is None or (self.source is not None and got is None):
-            canvas = np.full((480, 640, 3), 40, dtype=np.uint8)
-        else:
-            canvas = frame.copy()
-            overlays = snap.overlays if self.source is None or self.source.version == self._input_version else ()
-            for ov in overlays:
-                _draw(canvas, ov)
-        ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        return buf.tobytes() if ok else None
+            return annotated_jpeg(np.full((480, 640, 3), 40, dtype=np.uint8), ())
+        overlays = snap.overlays if self.source is None or self.source.version == self._input_version else ()
+        return annotated_jpeg(frame, overlays)
+
+
+def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75) -> bytes | None:
+    """Frame dengan kerangka dan label tiap orang, sebagai JPEG. Frame asli tidak diubah."""
+    canvas = frame.copy()
+    for ov in overlays:
+        _draw(canvas, ov)
+    ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return buf.tobytes() if ok else None
 
 
 def _draw(canvas: np.ndarray, ov: Overlay) -> None:

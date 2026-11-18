@@ -24,7 +24,8 @@ SAHABAT Sekolah menonton satu kamera, mengenali gerakan **jatuh** dan gerakan ya
 (memukul, menendang, mendorong, mencekik), lalu membunyikan alarm agar guru segera memeriksa. Sistem juga dapat
 memberi peringatan ringan bila terdengar **kata kasar** dalam bahasa Indonesia, Inggris, atau Jawa.
 
-Keputusan tetap berada di tangan guru. Sistem tidak mengenali wajah, tidak menentukan pelaku, dan tidak menyimpan video.
+Keputusan tetap berada di tangan guru. Sistem tidak mengenali wajah, tidak menentukan pelaku, dan tidak merekam
+video terus-menerus; yang disimpan hanya klip pendek di sekitar setiap kejadian, di laptop itu sendiri.
 
 Proyek ini dikembangkan untuk Indonesian Science Project Olympiad (ISPO) 2027, bidang Komputer,
 oleh tim SMP Negeri 29 Semarang.
@@ -78,6 +79,7 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | **Sudah diperiksa** atau tombol **Spasi** | Mematikan alarm setelah guru memeriksa |
 | **Senyap** | Mematikan bunyi alarm |
 | **Perangkat** | Memilih kamera dan mikrofon |
+| **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
 | **Kata kasar** atau tombol **M** | Menghidupkan / mematikan peringatan kata kasar |
 | **Balik kiri-kanan** atau tombol **C** | Membalik gambar kamera |
 
@@ -195,7 +197,10 @@ runtime\python\python.exe -m latih.putar data\rekaman\<folder-rekaman> --set vio
 ## Privasi
 
 - Semua pemrosesan terjadi di laptop. Tidak ada gambar atau suara yang dikirim ke internet.
-- Video tidak disimpan. Yang dicatat hanya log penilaian berupa angka di `data/log`, dihapus otomatis setelah 14 hari.
+- Video tidak direkam terus-menerus. Setiap kejadian menyimpan satu klip bukti pendek (5 detik sebelum sampai
+  3 detik sesudah, dengan kerangka tubuh) di `data/riwayat`, hanya di laptop itu sendiri, dan terhapus otomatis
+  setelah 7 hari. Penyimpanan klip bisa dimatikan dari panel **Riwayat**; kejadian tetap dicatat tanpa video.
+- Log penilaian berupa angka disimpan di `data/log` dan dihapus otomatis setelah 14 hari.
 - Sistem tidak mengenali wajah atau identitas. Nomor orang hanya berlaku selama orang itu terlihat.
 - Mode rekam uji menyimpan video; pakai hanya dengan izin semua orang yang terekam.
 
