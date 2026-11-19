@@ -8,6 +8,8 @@
 </head>
 <body data-bar="kamera_terputus">
   <img id="video" alt="Video kamera dengan kerangka tubuh">
+  <div id="grid" hidden aria-label="Kamera CCTV"></div>
+  <button id="grid-back" type="button" hidden>Kembali ke grid</button>
 
   <div id="top-row">
     <div id="chip"><span id="dot">●</span> <span id="fps">0</span> FPS · <span id="people">0</span> orang</div>
@@ -31,6 +33,7 @@
     <span id="bar-text">MENUNGGU KAMERA</span>
     <span id="bar-buttons">
       <button id="ack" type="button" hidden>Sudah diperiksa</button>
+      <button id="ack-all" type="button" hidden>Periksa semua</button>
       <button id="mute" type="button" hidden>Senyap</button>
     </span>
   </div>
@@ -78,6 +81,7 @@
   <dialog id="history-dialog" aria-labelledby="history-title">
     <div class="history-head">
       <h2 id="history-title">Riwayat kejadian</h2>
+      <select id="history-kamera" hidden aria-label="Saring menurut kamera"></select>
       <button id="history-close" type="button">Tutup</button>
     </div>
     <div class="history-body">
@@ -153,6 +157,10 @@
     </div>
     <p>Sambungkan IP camera, channel DVR/NVR CCTV, atau HP (aplikasi IP Webcam). Laptop harus tersambung ke jaringan
       yang sama dengan kamera. Kata sandi kamera disimpan terenkripsi di laptop ini dan tidak pernah ditampilkan.</p>
+    <div class="kamera-cctv">
+      <button id="cctv-toggle" type="button" data-on="0">Mode CCTV: mati</button>
+      <p id="cctv-message" role="status" aria-live="polite">Mode CCTV menilai semua kamera aktif sekaligus dalam grid.</p>
+    </div>
     <h3>Kamera tersimpan</h3>
     <ul id="kamera-list"></ul>
 
@@ -161,7 +169,8 @@
       <button type="button" data-kamera-mode="cari">Cari otomatis</button>
       <button type="button" data-kamera-mode="merek">Pilih merek</button>
       <button type="button" data-kamera-mode="alamat">Alamat lengkap</button>
-      <button type="button" data-kamera-mode="perangkat">Capture card DVR</button>
+      <button type="button" data-kamera-mode="perangkat">Webcam / capture card</button>
+      <button type="button" data-kamera-mode="video">Video (simulasi)</button>
     </div>
 
     <div id="kamera-cari-box" hidden>
@@ -196,8 +205,13 @@
       <div data-only="alamat">
         <label>Alamat lengkap <input id="kamera-alamat" placeholder="rtsp://192.168.1.64:554/..."></label>
       </div>
+      <div data-only="video">
+        <label>Video <select id="kamera-video"></select></label>
+        <p class="device-hint">Video dari folder <b>video</b> diputar berulang seperti kamera, untuk simulasi Mode CCTV.
+          Tambahkan video lewat panel Perangkat.</p>
+      </div>
       <div data-only="perangkat">
-        <label>Capture card <select id="kamera-perangkat"></select></label>
+        <label>Webcam / capture card <select id="kamera-perangkat"></select></label>
         <p class="device-hint">Untuk DVR tanpa jaringan: sambungkan keluaran HDMI DVR ke capture card USB.</p>
       </div>
       <div class="kamera-row" data-only="merek alamat">

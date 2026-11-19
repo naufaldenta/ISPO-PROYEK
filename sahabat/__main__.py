@@ -179,8 +179,16 @@ def main() -> int:
             update_local(SETTINGS_PATH, lan_code=lan.code)
         except OSError:
             pass
-    app = create_app(engine, listener, lan=lan)
+    from .server import build_mode
+    mode = build_mode(cfg, engine)
+    app = create_app(engine, listener, lan=lan, mode=mode)
     lan.app = app
+    if cfg.cctv_enabled:
+        print("Menyalakan Mode CCTV...")
+        try:
+            print(mode.set_cctv(True)["pesan"])
+        except Exception as exc:                         # SAHABAT tetap menyala di Mode Pameran
+            print(f"Mode CCTV belum bisa dinyalakan ({exc}). SAHABAT memakai Mode Pameran.")
     if cfg.lan_enabled:
         lan.set_enabled(True)
         if lan.enabled:

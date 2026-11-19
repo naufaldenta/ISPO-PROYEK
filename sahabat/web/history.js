@@ -14,6 +14,7 @@
   let items = [];
   let playing = null;      // kejadian yang klipnya sedang tampil
   let refreshTimer = null;
+  let cameras = "";        // daftar kamera Mode CCTV terakhir (untuk pilihan saring)
 
   function updateBadge() {
     const n = seenSeq === null ? 0 : Math.max(0, lastSeq - seenSeq);
@@ -38,7 +39,7 @@
   }
 
   function describe(it) {
-    const parts = [JENIS[it.jenis] || it.jenis, when(it.waktu)];
+    const parts = [JENIS[it.jenis] || it.jenis, it.kamera_nama, when(it.waktu)].filter(Boolean);
     if (MODE[it.mode]) parts.push(MODE[it.mode]);
     return parts.join(" · ");
   }
@@ -60,7 +61,7 @@
       const meta = document.createElement("span");
       meta.className = "history-meta";
       const clip = it.klip ? "klip tersedia" : (it.menyimpan ? "menyimpan klip…" : "tanpa klip");
-      meta.textContent = [when(it.waktu), MODE[it.mode], clip].filter(Boolean).join(" · ");
+      meta.textContent = [it.kamera_nama, when(it.waktu), MODE[it.mode], clip].filter(Boolean).join(" · ");
       btn.append(title, meta);
       btn.disabled = !it.klip;
       btn.addEventListener("click", () => play(it));
@@ -70,7 +71,9 @@
   }
 
   function load() {
-    return fetch("/api/riwayat", { cache: "no-store" })
+    const filter = $("history-kamera").hidden ? "" : $("history-kamera").value;
+    const url = "/api/riwayat" + (filter ? "?kamera=" + encodeURIComponent(filter) : "");
+    return fetch(url, { cache: "no-store" })
       .then((r) => r.json())
       .then((r) => {
         items = r.kejadian || [];
@@ -122,6 +125,21 @@
     });
     dialog.showModal();
   });
+
+  document.addEventListener("sahabat-cctv", (ev) => {
+    const list = ev.detail.cctv ? ev.detail.cctv.kamera : [];
+    const key = list.map((k) => k.id + ":" + k.nama).join("|");
+    if (key === cameras) return;
+    cameras = key;
+    const select = $("history-kamera");
+    const keep = select.value;
+    select.textContent = "";
+    select.add(new Option("Semua kamera", ""));
+    list.forEach((k) => select.add(new Option(k.nama, k.id)));
+    select.value = list.some((k) => k.id === keep) ? keep : "";
+    select.hidden = list.length === 0;
+  });
+  $("history-kamera").addEventListener("change", () => { stopPlayer(); load(); });
 
   $("history-close").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => { clearTimeout(refreshTimer); stopPlayer(); });

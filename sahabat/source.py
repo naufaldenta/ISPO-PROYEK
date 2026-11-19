@@ -100,6 +100,7 @@ class VideoSource:
         # camera:... = ID perangkat, int = indeks lama, ipcam:... = kamera CCTV, rtsp/http = stream, lain = video
         self.spec = spec
         self._resolve = resolve             # None = daftar kamera bersama (sahabat.kamera.default_store)
+        self._opened_file = False
         # Sebagian driver webcam mengirim gambar tercermin. flip=True membaliknya kiri-kanan sebelum gambar dipakai
         # siapa pun (pose, perekam, layar). Model tidak terpengaruh: cirinya sama untuk adegan dan cerminannya.
         self.flip = bool(flip)
@@ -220,6 +221,10 @@ class VideoSource:
             if source_kind(stream.url) == "webcam":                # capture card keluaran HDMI DVR
                 cap = self._open_webcam(stream.url, spec, CAPTURE_SIZE)
                 return cap, stream.potong, ("" if cap is not None else OPEN_FAILED), False
+            if source_kind(stream.url) == "file":                  # kamera "video (simulasi)": diputar seperti file
+                self._opened_file = True
+                cap = _checked(cv2.VideoCapture(stream.url))
+                return cap, stream.potong, ("" if cap is not None else OPEN_FAILED), False
             cap, message, park = self._open_network(stream.url)
             return cap, stream.potong, message, park
         if kind == "jaringan":
@@ -266,8 +271,7 @@ class VideoSource:
             if version != last_version:
                 failures, last_version = 0, version
             kind = source_kind(spec)
-            is_file = kind == "file"
-            network = kind in ("jaringan", "cctv")
+            self._opened_file = False                   # diisi _open_source bila ipcam: menunjuk ke berkas video
             tile, park = None, False
             try:
                 if kind in ("cctv", "jaringan"):
@@ -279,6 +283,8 @@ class VideoSource:
             except Exception as exc:
                 cap = None
                 self.error = samarkan("Kamera tidak bisa dibuka: " + str(exc))
+            is_file = kind == "file" or self._opened_file
+            network = kind in ("jaringan", "cctv") and not self._opened_file
             if cap is None:
                 self._drop()
                 failures += 1

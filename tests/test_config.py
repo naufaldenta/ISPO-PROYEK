@@ -57,7 +57,7 @@ def test_settings_file_holds_only_this_laptops_choices(tmp_path):
     assert set(json.loads(p.read_text(encoding="utf-8"))) == {"imgsz", "tuned_for", "slow", "port", "camera",
                                                                  "words_enabled", "microphone", "camera_flip",
                                                                  "clips_enabled", "zone",
-                                                                 "lan_enabled", "lan_code"}
+                                                                 "lan_enabled", "lan_code", "cctv_enabled"}
     got = load(p)
     assert (got.imgsz, got.tuned_for, got.slow, got.port, got.camera) == (416, "X", True, 9000, 1)
     assert got.fall_stay_s == Config().fall_stay_s

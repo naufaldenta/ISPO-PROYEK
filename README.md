@@ -81,7 +81,7 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | **Sudah diperiksa** atau tombol **Spasi** | Mematikan alarm setelah guru memeriksa |
 | **Senyap** | Mematikan bunyi alarm |
 | **Perangkat** | Memilih kamera, mikrofon, video cadangan, dan volume alarm (ada tombol **Coba bunyi**) |
-| **Kamera** | Menambah kamera CCTV: IP camera, channel DVR/NVR, HP sebagai kamera, atau capture card DVR |
+| **Kamera** | Menambah kamera CCTV (IP camera, channel DVR/NVR, HP, webcam, capture card, video simulasi) dan menyalakan **Mode CCTV** |
 | **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
 | **Zona** | Menggambar area yang dipantau; orang yang titik tengah badannya di luar zona tidak dinilai |
 | **HP / laptop lain** | Membuka layar ini dari HP atau laptop lain di WiFi yang sama (kode QR + kode akses) |
@@ -122,6 +122,34 @@ tersimpan juga muncul di daftar Kamera pada panel **Perangkat**. Kata sandi disi
 
 Pola alamat tiap merek diambil dari dokumentasi pabrikan dan baru diuji dengan kamera tiruan. Bila satu merek
 gagal, coba channel lain, matikan Substream, atau pakai **Alamat lengkap** dari aplikasi kamera.
+
+**Mode CCTV: banyak kamera sekaligus.** Di panel **Kamera**, tandai kamera yang ikut dengan **Aktif di Mode CCTV**,
+lalu tekan **Mode CCTV: hidup**. Layar berubah menjadi grid berisi semua kamera aktif. Ketuk satu kamera untuk
+memperbesarnya; zona pantau digambar pada kamera yang sedang diperbesar. Untuk simulasi tanpa CCTV, kamera bisa
+berupa webcam, HP, atau **Video (simulasi)** dari folder `video/`.
+
+| Status di ubin | Arti |
+|---|---|
+| **dinilai penuh** | Ada orang: kamera dinilai 10 kali per detik, sama dengan Mode Pameran |
+| **siaga** | Tidak ada orang: hanya gerakan yang dicek. Begitu ada gerak, kamera dinilai dalam ≤ 0,5 detik |
+| **lambat** | Ada orang, tetapi komputer tidak sanggup menilai 10 kali per detik. Alarm tetap berbunyi, ditandai "(dinilai lambat)" |
+| **terputus** | Kamera tidak mengirim gambar; SAHABAT mencoba menyambung lagi sendiri |
+
+Pita alarm menyebut kamera dan jamnya, misalnya `JATUH TERDETEKSI — Kelas 7B — 10.42.13`. Bila beberapa kamera
+beralarm, yang paling lama tampil lebih dulu; **Sudah diperiksa** memeriksa kamera itu, **Periksa semua** memeriksa
+semuanya. Riwayat mencatat kamera tiap kejadian dan bisa disaring per kamera. Tandai **Prioritas** untuk kamera di
+tempat rawan (misalnya tangga): kamera itu didahulukan bila komputer kewalahan.
+
+Setiap kamera dinilai dengan model dan pelacak yang sama persis dengan Mode Pameran, jadi akurasi per kamera tidak
+berubah selama kamera itu dinilai penuh. Yang membatasi adalah tenaga komputer. Saat Mode CCTV dinyalakan, SAHABAT
+mengukur komputernya dan menuliskan, misalnya, "Komputer ini sanggup menilai 1 kamera penuh sekaligus". Laptop tanpa
+kartu grafis biasanya hanya sanggup menilai **satu** kamera penuh sekaligus. Beberapa kamera tetap bisa dipantau karena
+kamera kosong hampir tidak memakai tenaga, tetapi bila dua kamera ramai bersamaan, keduanya menjadi **lambat**. Untuk
+pemasangan sungguhan dengan lebih dari 2 kamera, pakai komputer dengan kartu grafis.
+
+Layar HP / laptop lain (jaringan lokal) menampilkan grid yang sama dengan gambar kecil 5 fps supaya WiFi tidak berat.
+Menyalakan Mode CCTV, mengubah kamera, dan menggambar zona tetap hanya dari laptop SAHABAT. Mode CCTV yang dinyalakan
+diingat dan menyala lagi saat SAHABAT dimulai ulang.
 
 **Video cadangan.** Bila kamera bermasalah saat demo, buka **Perangkat**, tekan **Tambah video…** (atau salin video
 ke folder `video/` lalu **Cari ulang**), pilih videonya di daftar Kamera, lalu **Terapkan**. Video diputar berulang

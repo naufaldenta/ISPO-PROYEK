@@ -11,11 +11,29 @@
   let saved = null;        // zona yang berlaku sekarang (dari server), null = seluruh gambar
   let points = [];         // titik yang sedang digambar
   let box = null;          // letak gambar kamera di layar
+  let cctv = null;         // Mode CCTV: zona milik kamera yang sedang diperbesar
+  let camera = null;
+
+  function label() {
+    $("zone").textContent = saved ? "Zona: aktif" : "Zona";
+  }
 
   document.addEventListener("sahabat-zona", (ev) => {
+    if (cctv) return;
     saved = ev.detail;
     $("zone").hidden = false;
-    $("zone").textContent = saved ? "Zona: aktif" : "Zona";
+    label();
+  });
+
+  document.addEventListener("sahabat-cctv", (ev) => {
+    cctv = ev.detail.cctv;
+    camera = cctv ? ev.detail.enlarged : null;
+    if (!cctv) return;
+    const cam = (cctv.kamera || []).find((k) => k.id === camera);
+    $("zone").hidden = !cam;                 // Mode CCTV: zona digambar pada kamera yang diperbesar
+    if (cam && editor.hidden) saved = cam.zona;
+    label();
+    if (!cam && !editor.hidden) close();
   });
 
   // Gambar kamera memakai object-fit: contain, jadi letaknya dihitung dari ukuran aslinya.
@@ -75,8 +93,9 @@
 
   function send(titik) {
     $("zone-message").textContent = "Menyimpan…";
+    const body = cctv && camera ? { titik, kamera: camera } : { titik };
     fetch("/api/zona", { method: "POST", headers: { "Content-Type": "application/json" },
-                         body: JSON.stringify({ titik }) })
+                         body: JSON.stringify(body) })
       .then((r) => r.json())
       .then((r) => {
         if (!r.ok) { $("zone-message").textContent = r.error || "Zona belum tersimpan."; return; }

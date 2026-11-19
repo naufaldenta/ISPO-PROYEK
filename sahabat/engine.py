@@ -75,7 +75,7 @@ class Engine:
     def __init__(self, cfg: Config, source: VideoSource | None, pose: PoseProvider,
                  log: PredLog | None = None, slow: bool = False,
                  violence_model: Path | None = None, fall_model: Path | None = None,
-                 recorder=None, riwayat=None) -> None:
+                 recorder=None, riwayat=None, *, kamera: tuple[str, str] = ("", "")) -> None:
         self.cfg = cfg
         self.source = source           # None hanya untuk uji lewat step()
         self.pose = pose
@@ -83,6 +83,7 @@ class Engine:
         self.slow = slow
         self.recorder = recorder       # sahabat.recorder.Recorder; None = tidak merekam
         self.riwayat = riwayat         # sahabat.riwayat.Riwayat; None = tanpa riwayat kejadian
+        self.kamera = kamera           # Mode CCTV: (ID, nama) kamera ini; ("", "") = Mode Pameran
         self.zone = zones.load(cfg.zone)   # None = seluruh gambar
         self.history = History(cfg)
         self.fall = FallDetector(cfg, fall_model)
@@ -236,12 +237,20 @@ class Engine:
             if self.riwayat.wants_frames:
                 jpeg = annotated_jpeg(frame, overlays, quality=70, zone=self.zone)
                 if jpeg is not None:
-                    self.riwayat.frame(t, jpeg)
+                    if self.kamera[0]:
+                        self.riwayat.frame(t, jpeg, kamera=self.kamera[0])
+                    else:                                      # Mode Pameran: panggilan lama
+                        self.riwayat.frame(t, jpeg)
         except Exception:
             self._report("klip bukti")
         try:
             for e in events:
-                self.riwayat.event(t, "jatuh" if e.kind == "fall" else "kekerasan", e.mode, e.ids, e.source)
+                jenis = "jatuh" if e.kind == "fall" else "kekerasan"
+                if self.kamera[0]:
+                    self.riwayat.event(t, jenis, e.mode, e.ids, e.source, kamera=self.kamera[0],
+                                       kamera_nama=self.kamera[1])
+                else:
+                    self.riwayat.event(t, jenis, e.mode, e.ids, e.source)
         except Exception:
             self._report("riwayat")
 
@@ -300,6 +309,16 @@ class Engine:
             self._thread = threading.Thread(target=self._run, name="mesin", daemon=True)
             self._thread.start()
 
+    def pause(self) -> None:
+        """Mode CCTV menyala: utas berhenti, tetapi log, Riwayat, dan perekam tetap terbuka untuk resume()."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+            self._thread = None
+
+    def resume(self) -> None:
+        self.start()
+
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
@@ -335,23 +354,27 @@ class Engine:
 
     # ---- gambar untuk layar -----------------------------------------------------
 
-    def latest_jpeg(self) -> bytes | None:
-        """Frame kamera terbaru dengan kerangka dari penilaian terakhir, sebagai JPEG."""
+    def latest_jpeg(self, width: int | None = None, quality: int = 75) -> bytes | None:
+        """Frame kamera terbaru dengan kerangka dari penilaian terakhir, sebagai JPEG.
+        width = lebar hasil (ubin grid Mode CCTV); kerangka digambar dulu pada ukuran asli."""
         got = self.source.read() if self.source is not None else None
         snap = self._snapshot
         frame = got[1] if got is not None else self._frame
         if frame is None or (self.source is not None and got is None):
-            return annotated_jpeg(np.full((480, 640, 3), 40, dtype=np.uint8), ())
+            return annotated_jpeg(np.full((480, 640, 3), 40, dtype=np.uint8), (), quality, width=width)
         overlays = snap.overlays if self.source is None or self.source.version == self._input_version else ()
-        return annotated_jpeg(frame, overlays, zone=self.zone)
+        return annotated_jpeg(frame, overlays, quality, zone=self.zone, width=width)
 
 
-def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75, zone=None) -> bytes | None:
+def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75, zone=None, width: int | None = None) -> bytes | None:
     """Frame dengan zona pantau, kerangka, dan label tiap orang, sebagai JPEG. Frame asli tidak diubah."""
     canvas = frame.copy()
     zones.draw(canvas, zone)
     for ov in overlays:
         _draw(canvas, ov)
+    if width and canvas.shape[1] > width:
+        canvas = cv2.resize(canvas, (width, round(canvas.shape[0] * width / canvas.shape[1])),
+                            interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, quality])
     return buf.tobytes() if ok else None
 

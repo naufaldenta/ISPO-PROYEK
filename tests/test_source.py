@@ -402,3 +402,15 @@ def test_capture_card_asks_full_hd_but_webcam_stays_640(monkeypatch):  # Final #
     assert webcam._open() is not None
     assert sizes[1][cv2.CAP_PROP_FRAME_WIDTH] == 1920 and sizes[1][cv2.CAP_PROP_FRAME_HEIGHT] == 1080
     assert sizes[0][cv2.CAP_PROP_FRAME_WIDTH] == 640
+
+
+def test_cctv_video_camera_is_paced_and_loops_like_a_file(tiny_video):        # ditemukan di uji ujung ke ujung
+    src = VideoSource("ipcam:k1", resolve=lambda s: Stream(str(tiny_video), None))
+    src.start()
+    try:
+        assert wait_for(lambda: src.read() is not None, 3)
+        time.sleep(1.6)                                   # video 0,7 dtk: harus diputar ulang, bukan dianggap putus
+        assert src.read() is not None and src.connected
+        assert 15 <= src.fps <= 45                        # dipacu 30 fps, bukan secepat mungkin
+    finally:
+        src.stop()

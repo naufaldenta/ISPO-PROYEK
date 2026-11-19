@@ -92,6 +92,21 @@ if __name__ == "__main__" and "--microphones" in sys.argv:
 
 
 VIDEO_PREFIX = "video:"
+_BAD_NAME_CHARS = set(r'<>:"/\|?*')
+
+
+def safe_video_name(name) -> str | None:
+    """Nama berkas video yang aman untuk folder video/ (tanpa folder, ekstensi video), atau None."""
+    from pathlib import Path
+
+    from .config import VIDEO_EXTENSIONS
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if (not name or len(name) > 120 or name in (".", "..") or any(c in _BAD_NAME_CHARS or ord(c) < 32 for c in name)
+            or Path(name).suffix.lower() not in VIDEO_EXTENSIONS or name.startswith(".")):
+        return None
+    return name
 
 
 def list_videos(folder) -> list[dict]:

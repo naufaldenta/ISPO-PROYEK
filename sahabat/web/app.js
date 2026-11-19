@@ -14,6 +14,11 @@
   let wordsStatus = "memuat";   // keadaan pendengar kata kasar
   let flipped = false;          // gambar kamera dibalik kiri-kanan
   let remote = false;           // halaman dibuka dari HP / laptop lain: hanya melihat, bukan mengatur
+  let cctvOn = false;           // Mode CCTV: grid banyak kamera
+  let enlarged = null;          // kamera yang sedang diperbesar di Mode CCTV
+  let alarmKamera = null;       // kamera yang alarmnya sedang tampil di pita
+  const tiles = new Map();
+  const STATUS_TEXT = { penuh: "dinilai penuh", siaga: "siaga", lambat: "lambat", terputus: "terputus — mencoba lagi…" };
   let lastNoticeSeq = null;
   let markTimer = null;
   const VOLUME_KEY = "sahabat-volume";
@@ -96,8 +101,108 @@
     if (started && RED.has(bar) && !muted) sirenOn(); else sirenOff();
   }
 
+  // ---- Mode CCTV: grid ----
+  function columns(n) {
+    return n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+  }
+
+  function tileSrc(id) {
+    return "/video/gambar?kamera=" + encodeURIComponent(id) + "&kecil=1&t=" + Date.now();
+  }
+
+  // Ubin memakai satu gambar per permintaan, diminta ulang tiap 0,2 dtk (5 fps). Stream MJPEG per ubin akan
+  // menghabiskan 6 sambungan yang diizinkan browser, sehingga tombol "Sudah diperiksa" tidak terkirim.
+  function nextTile(id, delay) {
+    const tile = tiles.get(id);
+    if (!tile) return;
+    clearTimeout(tile.timer);
+    tile.timer = setTimeout(() => {
+      if (!tiles.has(id) || !cctvOn) return;
+      if (enlarged) { nextTile(id, 500); return; }          // grid tersembunyi: jangan meminta gambar
+      tile.querySelector("img").src = tileSrc(id);
+    }, delay);
+  }
+
+  function renderGrid(c) {
+    const grid = $("grid");
+    const ids = c.kamera.map((k) => k.id);
+    if (enlarged && !ids.includes(enlarged)) enlarged = null;
+    for (const [id, tile] of tiles) {
+      if (!ids.includes(id)) { clearTimeout(tile.timer); tile.querySelector("img").removeAttribute("src"); tile.remove(); tiles.delete(id); }
+    }
+    c.kamera.forEach((k, i) => {
+      let tile = tiles.get(k.id);
+      if (!tile) {
+        tile = document.createElement("button");
+        tile.type = "button";
+        tile.className = "tile";
+        tile.innerHTML = '<img alt=""><span class="tile-name"></span><span class="tile-status"></span>' +
+          '<span class="tile-bar" hidden></span>';
+        tile.querySelector("img").addEventListener("load", () => nextTile(k.id, 200));
+        tile.querySelector("img").addEventListener("error", () => nextTile(k.id, 1000));
+        tile.querySelector("img").src = tileSrc(k.id);
+        tile.addEventListener("click", () => enlarge(k.id));
+        tiles.set(k.id, tile);
+      }
+      if (grid.children[i] !== tile) grid.insertBefore(tile, grid.children[i] || null);
+      tile.querySelector("img").alt = "Kamera " + k.nama;
+      tile.querySelector(".tile-name").textContent = k.nama + (k.prioritas ? " ★" : "");
+      const status = tile.querySelector(".tile-status");
+      status.dataset.status = k.status;
+      status.textContent = "● " + (STATUS_TEXT[k.status] || k.status);
+      const red = RED.has(k.bar);
+      tile.dataset.red = red ? "1" : "0";
+      tile.querySelector(".tile-bar").hidden = !red;
+      tile.querySelector(".tile-bar").textContent = red ? k.text : "";
+    });
+    grid.style.setProperty("--cols", columns(c.kamera.length));
+    grid.hidden = !!enlarged;
+    $("video").hidden = !enlarged;
+    $("grid-back").hidden = !enlarged;
+  }
+
+  function enlarge(id) {
+    enlarged = id;
+    $("video").src = "/video?kamera=" + encodeURIComponent(id) + "&t=" + Date.now();
+    $("grid").hidden = true;
+    $("video").hidden = false;
+    $("grid-back").hidden = false;
+    document.dispatchEvent(new CustomEvent("sahabat-cctv", { detail: { cctv: lastCctv, enlarged } }));
+  }
+
+  function backToGrid() {
+    enlarged = null;
+    $("video").removeAttribute("src");
+    $("video").hidden = true;
+    $("grid").hidden = false;
+    $("grid-back").hidden = true;
+    document.dispatchEvent(new CustomEvent("sahabat-cctv", { detail: { cctv: lastCctv, enlarged } }));
+  }
+
+  function leaveCctv() {
+    for (const tile of tiles.values()) { clearTimeout(tile.timer); tile.querySelector("img").removeAttribute("src"); tile.remove(); }
+    tiles.clear();
+    enlarged = null;
+    $("grid").hidden = true;
+    $("grid-back").hidden = true;
+    $("video").hidden = false;
+    loadVideo();
+  }
+
+  let lastCctv = null;
+
   // ---- tampilan ----
   function render(m) {
+    const c = m.cctv && m.cctv.aktif ? m.cctv : null;
+    const wasOn = cctvOn;
+    cctvOn = !!c;
+    lastCctv = c;
+    document.body.classList.toggle("cctv", cctvOn);
+    if (cctvOn) renderGrid(c);
+    else if (wasOn) leaveCctv();
+    alarmKamera = c ? c.alarm_kamera : null;
+    $("ack-all").hidden = !c || (c.alarm_list || []).length < 2;
+    document.dispatchEvent(new CustomEvent("sahabat-cctv", { detail: { cctv: c, enlarged } }));
     if (m.devices) document.dispatchEvent(new CustomEvent("sahabat-devices", { detail: m.devices }));
     if (m.riwayat) document.dispatchEvent(new CustomEvent("sahabat-riwayat", { detail: m.riwayat }));
     if ("zona" in m) document.dispatchEvent(new CustomEvent("sahabat-zona", { detail: m.zona }));
@@ -141,6 +246,11 @@
 
   // ---- sambungan ----
   function loadVideo() {
+    if (cctvOn) {
+      if (enlarged) $("video").src = "/video?kamera=" + encodeURIComponent(enlarged) + "&t=" + Date.now();
+      for (const id of tiles.keys()) nextTile(id, 0);
+      return;
+    }
     $("video").src = "/video?t=" + Date.now();
   }
 
@@ -167,8 +277,19 @@
   // ---- tombol ----
   function acknowledge() {
     if (!RED.has(bar)) return;
+    if (cctvOn) {
+      fetch("/api/ack", { method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ kamera: alarmKamera }) }).catch(() => {});
+      return;
+    }
     fetch("/api/ack", { method: "POST" }).catch(() => {});
   }
+
+  $("ack-all").addEventListener("click", () => {
+    fetch("/api/ack", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ kamera: "semua" }) }).catch(() => {});
+  });
+  $("grid-back").addEventListener("click", backToGrid);
 
   $("start").addEventListener("click", () => {
     if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();

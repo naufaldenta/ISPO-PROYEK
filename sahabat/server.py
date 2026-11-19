@@ -23,6 +23,8 @@ from .listener import STATUS_LABEL, Listener
 WEB_DIR = Path(__file__).resolve().parent / "web"
 VIDEO_GAP_S = 0.05        # paling cepat 20 frame per detik
 REMOTE_VIDEO_GAP_S = 0.1  # layar jarak jauh: paling cepat 10 frame per detik, hemat WiFi
+TILE_VIDEO_GAP_S = 0.2    # ubin grid Mode CCTV: 5 frame per detik, gambar kecil
+LAST_CAMERA = "Ini kamera aktif terakhir. Aktifkan kamera lain atau matikan Mode CCTV dulu."
 STATE_GAP_S = 0.2
 VIOLENCE_MODEL = MODELS_DIR / "violence_model.joblib"
 FALL_MODEL = MODELS_DIR / "fall_model.joblib"
@@ -81,6 +83,30 @@ def _state(engine, listener=None, inputs=None) -> dict:
     return state
 
 
+def _video_gap(local: bool, small: bool) -> float:
+    if small:
+        return TILE_VIDEO_GAP_S
+    return VIDEO_GAP_S if local else REMOTE_VIDEO_GAP_S
+
+
+def remember_cctv(on: bool) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, cctv_enabled=bool(on))
+
+
+def build_mode(cfg: Config, engine):
+    """ModeControl nyata: model pose kedua untuk Mode CCTV dibuat sekali, saat Mode CCTV pertama kali dinyalakan."""
+    from .cctv import CctvRunner, ModeControl
+    from .pose import SharedPose, YoloPose
+    shared: dict = {}
+
+    def make_runner():
+        if "pose" not in shared:
+            shared["pose"] = SharedPose(YoloPose(cfg.imgsz or cfg.imgsz_candidates[-1]))
+        return CctvRunner(cfg, default_store(), shared["pose"], getattr(engine, "riwayat", None))
+    return ModeControl(engine, make_runner, remember_cctv)
+
+
 def remember_flip(on: bool) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, camera_flip=bool(on))
@@ -88,12 +114,8 @@ def remember_flip(on: bool) -> None:
 
 def video_name(name: str) -> str | None:
     """Nama berkas video yang aman untuk folder video/, atau None."""
-    from .config import VIDEO_EXTENSIONS
-    name = (name or "").strip()
-    if (not name or len(name) > 120 or name in (".", "..") or any(c in _BAD_NAME_CHARS or ord(c) < 32 for c in name)
-            or Path(name).suffix.lower() not in VIDEO_EXTENSIONS or name.startswith(".")):
-        return None
-    return name
+    from .devices import safe_video_name
+    return safe_video_name(name or "")
 
 
 def _free_name(folder: Path, name: str) -> Path:
@@ -128,14 +150,16 @@ def remember_clips(on: bool) -> None:
     update_local(SETTINGS_PATH, clips_enabled=bool(on))
 
 
-def _list_riwayat(riwayat) -> list[dict]:
+def _list_riwayat(riwayat, kamera: str | None = None) -> list[dict]:
     riwayat.prune()                     # aplikasi bisa menyala berhari-hari: bersihkan juga saat panel dibuka
-    return riwayat.list()
+    return riwayat.list() if kamera is None else riwayat.list(kamera=kamera)
 
 
 def _local_only(method: str, path: str) -> bool:
     """Pengaturan yang hanya boleh diubah dari laptop SAHABAT sendiri, bukan dari HP atau laptop lain."""
     if path.startswith("/api/jaringan") or path.startswith("/api/kamera"):
+        return True
+    if method == "POST" and path == "/api/cctv":
         return True
     return (method, path) in {
         ("GET", "/api/perangkat"), ("POST", "/api/perangkat"), ("POST", "/api/video"), ("POST", "/api/video/folder"),
@@ -163,7 +187,7 @@ def _login_page(message: str = "") -> str:
             '<button type="submit">Buka layar</button></form></body></html>')
 
 
-def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> FastAPI:
+def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=None) -> FastAPI:
     kamera = kamera if kamera is not None else default_store()      # daftar kamera CCTV (data/kamera.json)
     if inputs is None and getattr(engine, "source", None) is not None:
         from .input_control import InputDevices
@@ -209,13 +233,52 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
     async def index():
         return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
 
+    def cctv_on() -> bool:
+        return mode is not None and mode.hidup
+
+    def last_active(cam_id: str) -> bool:
+        """Mode CCTV tanpa kamera aktif tidak memantau apa pun, jadi kamera aktif terakhir tidak boleh dilepas."""
+        return cctv_on() and [c["id"] for c in kamera.active()] == [cam_id]
+
+    def with_cctv(state: dict) -> dict:
+        """Mode CCTV: pita, FPS, jumlah orang, dan nomor alarm diambil dari semua kamera."""
+        if mode is None:
+            return state
+        if not cctv_on():
+            state["cctv"] = {"aktif": False}
+            return state
+        snap = mode.cctv.snapshot()
+        state.update(bar=snap["bar"], text=snap["text"], fps=snap["fps"], people=snap["people"],
+                     alarm_seq=snap["alarm_seq"], slow=snap["lambat"],
+                     slow_text="Komputer tidak sanggup menilai semua kamera penuh" if snap["lambat"] else "")
+        state["cctv"] = snap
+        return state
+
+    @app.get("/video/gambar")
+    async def video_frame(kamera: str | None = None, kecil: int = 0):
+        """Satu JPEG (ubin grid Mode CCTV). Ubin diminta ulang oleh layar tiap 0,2 dtk; tidak memakai stream, karena
+        browser hanya membuka 6 sambungan per alamat dan stream ubin akan menahan tombol "Sudah diperiksa"."""
+        if kamera and cctv_on():
+            jpeg = await run_in_threadpool(mode.cctv.latest_jpeg, kamera, bool(kecil))
+        else:
+            jpeg = await run_in_threadpool(engine.latest_jpeg)
+        if not jpeg:
+            return Response(status_code=404, headers=NO_CACHE)
+        return Response(jpeg, media_type="image/jpeg", headers=NO_CACHE)
+
     @app.get("/video")
-    async def video(request: Request):
-        gap = VIDEO_GAP_S if is_local(request.client.host if request.client else None) else REMOTE_VIDEO_GAP_S
+    async def video(request: Request, kamera: str | None = None, kecil: int = 0):
+        local = is_local(request.client.host if request.client else None)
+        gap = _video_gap(local, bool(kecil) and bool(kamera))
+
+        def grab():
+            if kamera and cctv_on():
+                return mode.cctv.latest_jpeg(kamera, small=bool(kecil))
+            return engine.latest_jpeg()
 
         async def frames():
             while True:
-                jpeg = await run_in_threadpool(engine.latest_jpeg)
+                jpeg = await run_in_threadpool(grab)
                 if jpeg:
                     yield mjpeg_chunk(jpeg)
                 await asyncio.sleep(gap)
@@ -236,7 +299,7 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
                 if not local and not remote_allowed(socket.cookies.get(COOKIE)):
                     await socket.close(code=1008)                  # kode diganti atau jaringan dimatikan
                     return
-                state = _state(engine, listener, inputs)
+                state = with_cctv(_state(engine, listener, inputs))
                 state["lokal"] = local
                 if local and lan is not None:
                     state["jaringan"] = {"hidup": lan.enabled, "penonton": lan.viewers}
@@ -304,8 +367,42 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
         return {"ok": True, **lan.status()}
 
     @app.post("/api/ack")
-    async def ack():
+    async def ack(request: Request):
+        """Mode CCTV: {"kamera": "<id>"} atau {"kamera": "semua"}; tanpa badan = alarm yang sedang tampil."""
+        target = None
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and isinstance(body.get("kamera"), str):
+                target = body["kamera"]
+        except ValueError:
+            pass
+        if cctv_on():
+            if target == "semua":
+                return {"ok": bool(await run_in_threadpool(mode.cctv.acknowledge_all))}
+            return {"ok": bool(await run_in_threadpool(mode.cctv.acknowledge, target))}
         return {"ok": bool(await run_in_threadpool(engine.acknowledge))}
+
+    @app.get("/api/cctv")
+    async def cctv_status():
+        if mode is None:
+            return {"ok": True, "hidup": False, "pesan": "Mode CCTV tidak tersedia."}
+        return {"ok": True, **await run_in_threadpool(mode.status)}
+
+    @app.post("/api/cctv")
+    async def cctv_switch(request: Request):
+        if mode is None:
+            return JSONResponse({"ok": False, "error": "Mode CCTV tidak tersedia."}, status_code=503)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        on = body.get("hidup") if isinstance(body, dict) else None
+        if not isinstance(on, bool):
+            return JSONResponse({"ok": False, "error": "Kirim hidup: true/false."}, status_code=400)
+        try:
+            return {"ok": True, **await run_in_threadpool(mode.set_cctv, on)}
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
     @app.post("/api/tanda")
     async def mark(request: Request):
@@ -354,11 +451,11 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
         return {"app": "sahabat"}
 
     @app.get("/api/riwayat")
-    async def history():
+    async def history(kamera: str | None = None):
         riwayat = getattr(engine, "riwayat", None)
         if riwayat is None or riwayat.disabled:
             return {"ok": False, "kejadian": [], "simpan_klip": False, "hari": 0}
-        items = await run_in_threadpool(_list_riwayat, riwayat)
+        items = await run_in_threadpool(_list_riwayat, riwayat, kamera)
         return {"ok": True, "kejadian": items, "simpan_klip": bool(riwayat.keep_clips),
                 "hari": riwayat.keep_days, "sebelum": riwayat.before_s, "sesudah": riwayat.after_s}
 
@@ -428,15 +525,26 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
 
     @app.post("/api/zona")
     async def set_zone(request: Request):
-        """Zona pantau dari layar: {"titik": [[x, y], ...]} ternormalisasi, atau {"titik": null} = seluruh gambar."""
-        if not hasattr(engine, "set_zone"):
-            return JSONResponse({"ok": False, "error": "Zona tidak tersedia."}, status_code=503)
+        """Zona pantau dari layar: {"titik": [[x, y], ...]} ternormalisasi, atau {"titik": null} = seluruh gambar.
+        Mode CCTV: {"titik": ..., "kamera": "<id>"} untuk kamera yang sedang diperbesar."""
         try:
             body = await request.json()
         except ValueError:
             body = None
         if not isinstance(body, dict) or "titik" not in body:
             return JSONResponse({"ok": False, "error": "Kirim titik zona."}, status_code=400)
+        if not (cctv_on() and isinstance(body.get("kamera"), str)) and not hasattr(engine, "set_zone"):
+            return JSONResponse({"ok": False, "error": "Zona tidak tersedia."}, status_code=503)
+        if cctv_on() and isinstance(body.get("kamera"), str):
+            try:
+                zone = await run_in_threadpool(mode.cctv.set_zone, body["kamera"], body["titik"])
+                points = [list(p) for p in zone] if zone else None
+                await run_in_threadpool(kamera.set_zone, body["kamera"], points)
+            except ValueError as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+            except OSError:
+                points = [list(p) for p in zone] if zone else None
+            return {"ok": True, "titik": points, "kamera": body["kamera"]}
         try:
             zone = await run_in_threadpool(engine.set_zone, body["titik"])
         except ValueError as exc:
@@ -495,6 +603,27 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
         source = getattr(engine, "source", None)
         if getattr(source, "spec", None) == IPCAM_PREFIX + item["id"] and hasattr(source, "reopen"):
             source.reopen()                 # kamera yang sedang dipakai langsung memakai alamat/sandi baru
+        if cctv_on():
+            await run_in_threadpool(mode.cctv.reload)
+        return {"ok": True, "kamera": item}
+
+    @app.post("/api/kamera/{cam_id}/tanda")
+    async def kamera_flags(cam_id: str, request: Request):
+        """Tanda Mode CCTV dari panel Kamera: {"aktif": bool?, "prioritas": bool?}."""
+        try:
+            body = await _body(request)
+            aktif, prioritas = body.get("aktif"), body.get("prioritas")
+            if not all(v is None or isinstance(v, bool) for v in (aktif, prioritas)):
+                raise ValueError("Tanda kamera harus true/false.")
+            if aktif is False and cctv_on() and mode.cctv.has_unacked(cam_id):
+                return _bad(ValueError("Periksa alarm kamera ini dulu."), 409)
+            if aktif is False and last_active(cam_id):
+                return _bad(ValueError(LAST_CAMERA), 409)
+            item = await run_in_threadpool(kamera.set_flags, cam_id, aktif, prioritas)
+        except ValueError as exc:
+            return _bad(exc)
+        if cctv_on():
+            await run_in_threadpool(mode.cctv.reload)
         return {"ok": True, "kamera": item}
 
     @app.delete("/api/kamera/{cam_id}")
@@ -502,8 +631,14 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> Fas
         source = getattr(engine, "source", None)
         if getattr(source, "spec", None) == IPCAM_PREFIX + cam_id:
             return _bad(ValueError("Kamera ini sedang dipakai. Pilih kamera lain dulu di Perangkat."), 409)
+        if cctv_on() and mode.cctv.has_unacked(cam_id):
+            return _bad(ValueError("Periksa alarm kamera ini dulu."), 409)
+        if last_active(cam_id):
+            return _bad(ValueError(LAST_CAMERA), 409)
         if not await run_in_threadpool(kamera.delete, cam_id):
             return _bad(ValueError("Kamera tidak ditemukan."), 404)
+        if cctv_on():
+            await run_in_threadpool(mode.cctv.reload)
         return {"ok": True}
 
     @app.post("/api/kamera/uji")
@@ -609,4 +744,4 @@ def dev_app() -> FastAPI:
         listener.start()
     except Exception as e:
         print(f"Peringatan: pendengar kata kasar tidak bisa dinyalakan ({e}); bagian kamera tetap jalan.")
-    return create_app(engine, listener)
+    return create_app(engine, listener, mode=build_mode(cfg, engine))

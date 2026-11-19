@@ -29,7 +29,7 @@ from .merek import (MEREK, SANDI_MARK, SKEMA_BOLEH, alamat_merek, isi_sandi_quer
 from .rahasia import buka, simpan
 
 IPCAM_PREFIX = "ipcam:"
-JENIS = ("merek", "alamat", "perangkat")
+JENIS = ("merek", "alamat", "perangkat", "video")
 MAX_NAMA = 40
 _ID = re.compile(r"^[a-z0-9]{1,12}$")
 _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.\-]{0,251}[A-Za-z0-9])?$")
@@ -88,8 +88,10 @@ def _potong(value) -> tuple[int, int] | None:
 
 
 class KameraStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, video_dir: Path | None = None) -> None:
+        from .config import VIDEO_DIR
         self.path = Path(path)
+        self.video_dir = Path(video_dir) if video_dir is not None else VIDEO_DIR   # jenis "video" (simulasi)
         self._lock = threading.RLock()
         self._items: list[dict] = self._load()
 
@@ -159,7 +161,7 @@ class KameraStore:
         if sandi is not None:
             sandi = _text(sandi, "Kata sandi", 128)
         out = {"nama": nama, "jenis": jenis, "merek": "", "host": "", "port": 0, "channel": 1, "substream": True,
-               "alamat": "", "perangkat": "", "pengguna": pengguna, "potong": _potong(data.get("potong"))}
+               "alamat": "", "perangkat": "", "video": "", "pengguna": pengguna, "potong": _potong(data.get("potong"))}
         if jenis == "merek":
             merek = data.get("merek")
             if merek not in MEREK:
@@ -185,6 +187,13 @@ class KameraStore:
                 sandi = url_pass
             if query_pass is not None:
                 sandi = query_pass
+        elif jenis == "video":
+            from .devices import safe_video_name
+            name = safe_video_name(data.get("video"))
+            if name is None:
+                raise ValueError("Pilih video dari folder video.")
+            out.update(video=name, pengguna="")
+            sandi = ""
         else:
             perangkat = _text(data.get("perangkat"), "Perangkat", 1000)
             if not perangkat.startswith("camera:"):
@@ -201,18 +210,24 @@ class KameraStore:
             if SANDI_MARK in item["alamat"]:          # kata sandi di query, bukan sebelum "@"
                 return pasang_login(isi_sandi_query(item["alamat"], sandi), item.get("pengguna", ""), "")
             return pasang_login(item["alamat"], item.get("pengguna", ""), sandi)
+        if item["jenis"] == "video":
+            return str(self.video_dir / item["video"])
         return item["perangkat"]
 
     def _public(self, item: dict) -> dict:
         sandi, rusak = self._password(item)
-        shown = samarkan(self._url(item, "x" if (sandi or rusak) else ""))
+        shown = ("Video: " + item.get("video", "")) if item["jenis"] == "video" else \
+            samarkan(self._url(item, "x" if (sandi or rusak) else ""))
         potong = item.get("potong")
         return {"id": item["id"], "nama": item["nama"], "jenis": item["jenis"], "merek": item.get("merek", ""),
                 "host": item.get("host", ""), "port": item.get("port", 0), "channel": item.get("channel", 1),
                 "substream": item.get("substream", True), "alamat_tampil": shown,
                 "alamat_edit": item.get("alamat", "") if item["jenis"] == "alamat" else "",
                 "pengguna": item.get("pengguna", ""), "ada_sandi": bool(item.get("sandi")), "sandi_rusak": rusak,
-                "perangkat": item.get("perangkat", ""), "potong": list(potong) if potong else None}
+                "perangkat": item.get("perangkat", ""), "potong": list(potong) if potong else None,
+                "video": item.get("video", ""), "aktif": bool(item.get("aktif", True)),
+                "prioritas": bool(item.get("prioritas", False)), "zona": item.get("zona"),
+                "rev": int(item.get("rev", 0))}
 
     # ---- API ----
     def list_public(self) -> list[dict]:
@@ -233,14 +248,17 @@ class KameraStore:
                 if item is None:
                     raise ValueError("Kamera tidak ditemukan. Muat ulang daftar kamera.")
                 old_sandi = item.get("sandi", "")
+                kept = {k: item[k] for k in ("aktif", "prioritas", "zona") if k in item}   # hanya lewat set_*
+                rev = int(item.get("rev", 0)) + 1          # naik tiap simpan: Mode CCTV menyambung ulang
                 item.clear()
-                item.update(id=cam_id, **clean)
+                item.update(id=cam_id, **clean, **kept, rev=rev)
                 item["sandi"] = old_sandi if sandi is None else (simpan(sandi) if sandi else "")
             else:
                 cam_id = "k" + secrets.token_hex(3)
                 while self._find(cam_id):
                     cam_id = "k" + secrets.token_hex(3)
-                item = {"id": cam_id, **clean, "sandi": simpan(sandi) if sandi else ""}
+                item = {"id": cam_id, **clean, "sandi": simpan(sandi) if sandi else "", "aktif": True,
+                        "prioritas": False, "zona": None}
                 self._items.append(item)
             if item.get("potong"):
                 item["potong"] = list(item["potong"])
@@ -265,9 +283,38 @@ class KameraStore:
                 return None
             sandi, rusak = self._password(item)
             potong = tuple(item["potong"]) if item.get("potong") else None
+            if item["jenis"] == "video" and not (self.video_dir / item.get("video", "")).is_file():
+                return Stream("", potong, f"Video {item.get('video', '')} tidak ada di folder video.")
             if rusak:                       # mencoba login tanpa sandi berulang kali bisa mengunci akun kamera
                 return Stream("", potong, PASSWORD_UNREADABLE)
             return Stream(self._url(item, sandi), potong)
+
+    def set_flags(self, cam_id: str, aktif: bool | None = None, prioritas: bool | None = None) -> dict:
+        """Tanda Mode CCTV: ikut dinilai (aktif) dan didahulukan penjadwal (prioritas)."""
+        with self._lock:
+            item = self._find(cam_id)
+            if item is None:
+                raise ValueError("Kamera tidak ditemukan.")
+            if aktif is not None:
+                item["aktif"] = bool(aktif)
+            if prioritas is not None:
+                item["prioritas"] = bool(prioritas)
+            self._write()
+            return self._public(item)
+
+    def set_zone(self, cam_id: str, zona) -> dict:
+        """Zona pantau kamera ini (titik ternormalisasi dari sahabat.zone.normalize) atau None."""
+        with self._lock:
+            item = self._find(cam_id)
+            if item is None:
+                raise ValueError("Kamera tidak ditemukan.")
+            item["zona"] = [list(map(float, p)) for p in zona] if zona else None
+            self._write()
+            return self._public(item)
+
+    def active(self) -> list[dict]:
+        with self._lock:
+            return [self._public(it) for it in self._items if it.get("aktif", True)]
 
     def catalog(self) -> list[dict]:
         with self._lock:

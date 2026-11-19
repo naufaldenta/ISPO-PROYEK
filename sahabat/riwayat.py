@@ -39,6 +39,8 @@ class Kejadian:
     orang: list[int]
     sumber: str
     klip: bool
+    kamera: str = ""                # Mode CCTV: ID kamera; "" = kamera Mode Pameran
+    kamera_nama: str = ""
 
 
 @dataclass
@@ -46,6 +48,7 @@ class _Capture:
     record: Kejadian
     end_t: float
     frames: list[tuple[float, bytes]]
+    kamera: str = ""
 
 
 class Riwayat:
@@ -63,7 +66,7 @@ class Riwayat:
         self.min_free = min_free
         self._background = background
         self._lock = threading.RLock()
-        self._ring: deque[tuple[float, bytes]] = deque()
+        self._rings: dict[str, deque[tuple[float, bytes]]] = {}     # per kamera ("" = Mode Pameran)
         self._open: list[_Capture] = []
         self._writers: list[threading.Thread] = []
         self._used_ids: set[str] = set()
@@ -88,19 +91,22 @@ class Riwayat:
         with self._lock:
             self.keep_clips = bool(on)
             if not on:
-                self._ring.clear()
+                self._rings.clear()
             return self.keep_clips
 
-    def frame(self, t: float, jpeg: bytes) -> None:
-        """Frame layar terbaru (JPEG, sudah berkerangka). Dipanggil tiap putaran penilaian."""
+    def frame(self, t: float, jpeg: bytes, kamera: str = "") -> None:
+        """Frame layar terbaru (JPEG, sudah berkerangka) satu kamera. Dipanggil tiap putaran penilaian."""
         if not self.wants_frames:
             return
         with self._lock:
-            self._ring.append((t, jpeg))
-            while self._ring and t - self._ring[0][0] > self.before_s + 0.5:
-                self._ring.popleft()
+            ring = self._rings.setdefault(kamera, deque())
+            ring.append((t, jpeg))
+            while ring and t - ring[0][0] > self.before_s + 0.5:
+                ring.popleft()
             done = []
             for cap in self._open:
+                if cap.kamera != kamera:
+                    continue
                 if t <= cap.end_t + 1e-6:
                     cap.frames.append((t, jpeg))
                 if t >= cap.end_t - 1e-6:
@@ -109,19 +115,21 @@ class Riwayat:
                 self._open.remove(cap)
                 self._finish(cap)
 
-    def event(self, t: float, jenis: str, mode: str, ids, sumber: str = "model") -> Kejadian | None:
+    def event(self, t: float, jenis: str, mode: str, ids, sumber: str = "model", kamera: str = "",
+              kamera_nama: str = "") -> Kejadian | None:
         """Kejadian baru pada waktu mesin t. Klip mulai dikumpulkan bila penyimpanan klip hidup."""
         if self.disabled:
             return None
         with self._lock:
             clip = self.wants_frames and self._has_space()
             record = Kejadian(self._new_id(), round(self._clock(), 3), jenis, mode, [int(i) for i in ids],
-                              sumber, clip)
+                              sumber, clip, kamera, kamera_nama)
             self._append(record)
             self.seq += 1
             if clip:
-                frames = [(ft, j) for ft, j in self._ring if ft >= t - self.before_s - 1e-6]
-                self._open.append(_Capture(record, t + self.after_s, frames))
+                ring = self._rings.get(kamera, ())
+                frames = [(ft, j) for ft, j in ring if ft >= t - self.before_s - 1e-6]
+                self._open.append(_Capture(record, t + self.after_s, frames, kamera))
             return record
 
     def close(self) -> None:
@@ -136,14 +144,16 @@ class Riwayat:
 
     # ---- dibaca layar --------------------------------------------------------------
 
-    def list(self, limit: int = MAX_LISTED) -> list[dict]:
-        """Kejadian terbaru lebih dulu. `klip` hanya benar bila berkasnya sudah tersimpan dan masih ada."""
+    def list(self, limit: int = MAX_LISTED, kamera: str | None = None) -> list[dict]:
+        """Kejadian terbaru lebih dulu, bisa disaring per kamera. `klip` hanya benar bila berkasnya sudah tersimpan
+        dan masih ada."""
         if self.disabled:
             return []
         with self._lock:
             open_ids = {c.record.id for c in self._open}
             out = []
-            for rec in reversed(self._read_all()[-limit:]):
+            records = [r for r in self._read_all() if kamera is None or r.kamera == kamera]
+            for rec in reversed(records[-limit:]):
                 item = asdict(rec)
                 item["klip"] = rec.klip and rec.id not in open_ids and self._clip_path(rec.id).is_file()
                 item["menyimpan"] = rec.id in open_ids
@@ -232,7 +242,8 @@ class Riwayat:
                 raw = json.loads(line)
                 out.append(Kejadian(str(raw["id"]), float(raw["waktu"]), str(raw["jenis"]), str(raw["mode"]),
                                     [int(i) for i in raw["orang"]], str(raw.get("sumber", "model")),
-                                    bool(raw.get("klip", False))))
+                                    bool(raw.get("klip", False)), str(raw.get("kamera", "")),
+                                    str(raw.get("kamera_nama", ""))))
             except (ValueError, KeyError, TypeError):
                 continue
         for r in out:

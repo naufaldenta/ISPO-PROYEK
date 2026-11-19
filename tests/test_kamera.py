@@ -148,3 +148,40 @@ def test_query_password_with_raw_hash_and_slash(tmp_path):     # Final #1 (ditem
     assert "cret" not in str(item) and "cret" not in (tmp_path / "kamera.json").read_text(encoding="utf-8")
     assert item["alamat_edit"] == "http://192.168.1.77/v.cgi?user=admin&pwd={SANDI}"
     assert s.resolve("ipcam:" + item["id"]).url == "http://192.168.1.77/v.cgi?user=admin&pwd=s%2Fe%23cret"
+
+
+# ---- Bagian 2: Mode CCTV ----
+def test_new_cameras_are_active_and_flags_survive_edits(tmp_path):
+    s = store(tmp_path)
+    item = s.save({"nama": "A", "jenis": "alamat", "alamat": "rtsp://h/x"})
+    assert item["aktif"] is True and item["prioritas"] is False and item["zona"] is None
+    s.set_flags(item["id"], aktif=False, prioritas=True)
+    s.set_zone(item["id"], [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]])
+    edited = s.save({"id": item["id"], "nama": "B", "jenis": "alamat", "alamat": "rtsp://h/x"})
+    assert (edited["aktif"], edited["prioritas"], edited["zona"]) == (False, True, [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]])
+    assert store(tmp_path).get_public(item["id"])["prioritas"] is True
+    assert [c["id"] for c in s.active()] == []
+    s.set_flags(item["id"], aktif=True)
+    assert [c["id"] for c in s.active()] == [item["id"]]
+
+
+def test_video_camera_for_simulation(tmp_path):
+    videos = tmp_path / "video"
+    videos.mkdir()
+    (videos / "jatuh.mp4").write_bytes(b"x")
+    s = KameraStore(tmp_path / "k.json", video_dir=videos)
+    item = s.save({"nama": "Simulasi", "jenis": "video", "video": "jatuh.mp4"})
+    assert s.resolve("ipcam:" + item["id"]) == Stream(str(videos / "jatuh.mp4"), None)
+    assert item["video"] == "jatuh.mp4"
+    (videos / "jatuh.mp4").unlink()
+    assert "tidak ada di folder video" in s.resolve("ipcam:" + item["id"]).galat
+    for bad in ("../rahasia.mp4", "a.txt", ""):
+        with pytest.raises(ValueError):
+            s.save({"nama": "X", "jenis": "video", "video": bad})
+
+
+def test_flags_unknown_camera(tmp_path):
+    with pytest.raises(ValueError):
+        store(tmp_path).set_flags("tidakada", aktif=True)
+    with pytest.raises(ValueError):
+        store(tmp_path).set_zone("tidakada", None)

@@ -57,6 +57,18 @@
         warn.textContent = "Kata sandi perlu diisi ulang (tekan Ubah).";
         info.append(warn);
       }
+      const flags = document.createElement("div");
+      flags.className = "kamera-flags";
+      [["aktif", "Aktif di Mode CCTV"], ["prioritas", "Prioritas"]].forEach(([key, text]) => {
+        const label = document.createElement("label");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = !!it[key];
+        box.addEventListener("change", () => setFlag(it, key, box));
+        label.append(box, text);
+        flags.append(label);
+      });
+      info.append(flags);
       const actions = document.createElement("div");
       actions.className = "kamera-actions";
       [["Pakai", () => use(it)], ["Ubah", () => edit(it)], ["Hapus", () => remove(it)]].forEach(([label, fn]) => {
@@ -86,6 +98,44 @@
       say(error.message);
     }
   }
+
+  async function setFlag(it, key, box) {
+    try {
+      await post("/api/kamera/" + encodeURIComponent(it.id) + "/tanda", { [key]: box.checked });
+      say(`${it.nama}: ${key === "aktif" ? (box.checked ? "ikut" : "tidak ikut") + " Mode CCTV"
+        : (box.checked ? "prioritas" : "bukan prioritas")}.`);
+      it[key] = box.checked;
+    } catch (error) {
+      box.checked = !box.checked;
+      say(error.message);
+    }
+  }
+
+  // ---- Mode CCTV ----
+  function showCctv(st) {
+    $("cctv-toggle").dataset.on = st.hidup ? "1" : "0";
+    $("cctv-toggle").textContent = "Mode CCTV: " + (st.hidup ? "hidup" : "mati");
+    $("cctv-message").textContent = st.hidup ? st.pesan
+      : "Mode CCTV menilai semua kamera aktif sekaligus dalam grid.";
+  }
+
+  async function loadCctv() {
+    try { showCctv(await api("/api/cctv")); } catch (error) { $("cctv-message").textContent = error.message; }
+  }
+
+  $("cctv-toggle").addEventListener("click", async () => {
+    const on = $("cctv-toggle").dataset.on !== "1";
+    setBusy(true);
+    $("cctv-message").textContent = on ? "Menyalakan Mode CCTV: menyambung kamera dan mengukur komputer…"
+      : "Kembali ke Mode Pameran…";
+    try {
+      showCctv(await post("/api/cctv", { hidup: on }));
+    } catch (error) {
+      $("cctv-message").textContent = error.message;
+    } finally {
+      setBusy(false);
+    }
+  });
 
   async function use(it) {
     setBusy(true);
@@ -124,7 +174,7 @@
     dialog.querySelectorAll("[data-only]").forEach((el) => {
       el.hidden = !el.dataset.only.split(" ").includes(mode);
     });
-    if (mode === "perangkat") loadDevices();
+    if (mode === "perangkat" || mode === "video") loadDevices();
   }
 
   function brandChanged() {
@@ -150,8 +200,13 @@
       const select = $("kamera-perangkat");
       select.textContent = "";
       result.cameras.forEach((c) => select.add(new Option(c.name, c.id)));
-      if (!result.cameras.length) select.add(new Option("Tidak ada kamera USB / capture card", ""));
-      if (selected) select.value = selected;
+      if (!result.cameras.length) select.add(new Option("Tidak ada webcam / capture card", ""));
+      const videos = $("kamera-video");
+      videos.textContent = "";
+      (result.videos || []).forEach((v) => videos.add(new Option(v.name, v.name)));
+      if (!(result.videos || []).length) videos.add(new Option("Belum ada video di folder video", ""));
+      if (selected && mode === "perangkat") select.value = selected;
+      if (selected && mode === "video") videos.value = selected;
     } catch (error) {
       say(error.message);
     }
@@ -188,6 +243,8 @@
       $("kamera-sub").checked = !!it.substream;
     } else if (it.jenis === "alamat") {
       $("kamera-alamat").value = it.alamat_edit;      // tanpa login; {SANDI} = kata sandi tersimpan di query
+    } else if (it.jenis === "video") {
+      loadDevices(it.video);
     } else {
       loadDevices(it.perangkat);
     }
@@ -208,6 +265,9 @@
                             substream: $("kamera-sub").checked });
     } else if (mode === "alamat") {
       data.alamat = $("kamera-alamat").value.trim();
+    } else if (mode === "video") {
+      data.video = $("kamera-video").value;
+      delete data.pengguna;
     } else {
       data.perangkat = $("kamera-perangkat").value;
       delete data.pengguna;
@@ -313,6 +373,7 @@
     if (!dialog.open) dialog.showModal();
     say("");
     load();
+    loadCctv();
   });
   $("kamera-close").addEventListener("click", () => dialog.close());
   dialog.querySelectorAll("[data-kamera-mode]").forEach((b) => b.addEventListener("click", () => {

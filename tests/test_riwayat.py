@@ -167,3 +167,39 @@ def test_read_only_folder_turns_history_off(tmp_path):
     assert r.event(1.0, "jatuh", "full", [1]) is None
     r.frame(1.0, b"x")
     assert r.list() == [] and r.clip("20261118-101010-1") is None
+
+
+# ---- Bagian 2: riwayat per kamera ----
+def test_clips_never_mix_cameras(tmp_path):
+    r = make(tmp_path, before_s=1.0, after_s=0.5)
+    rec = None
+    for i in range(20):
+        t = i * 0.1
+        r.frame(t, b"A%d" % i, kamera="k1")
+        r.frame(t, b"B%d" % i, kamera="k2")
+        if i == 12:
+            rec = r.event(t, "jatuh", "full", [3], kamera="k2", kamera_nama="Lorong")
+    frames = r.clip(rec.id)
+    assert frames and all(j.startswith(b"B") for _, j in frames)
+    item = r.list()[0]
+    assert (item["kamera"], item["kamera_nama"]) == ("k2", "Lorong")
+    assert r.list(kamera="k1") == [] and len(r.list(kamera="k2")) == 1
+
+
+def test_old_records_without_camera_still_load(tmp_path):
+    clock = Clock()
+    (tmp_path / LOG_FILE).write_text(json.dumps({"id": "20261118-100000-1", "waktu": clock.now, "jenis": "jatuh",
+                                                 "mode": "full", "orang": [1], "sumber": "model", "klip": False})
+                                     + "\n", encoding="utf-8")
+    assert make(tmp_path, clock=clock).list()[0]["kamera"] == ""
+
+
+def test_turning_clips_off_clears_every_camera(tmp_path):
+    r = make(tmp_path)
+    r.frame(0.0, b"A", kamera="k1")
+    r.frame(0.0, b"B", kamera="k2")
+    r.set_keep_clips(False)
+    r.set_keep_clips(True)
+    rec = r.event(0.1, "jatuh", "full", [1], kamera="k1")
+    r.frame(3.1, b"A2", kamera="k1")                 # akhir klip: 0,1 + 3 dtk
+    assert [j for _, j in r.clip(rec.id)] == [b"A2"]

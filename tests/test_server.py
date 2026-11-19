@@ -321,3 +321,15 @@ def test_engine_without_zone_support_says_so(client):
 def test_page_has_the_zone_button_and_editor(client):
     text = client.get("/").text
     assert 'id="zone"' in text and 'id="zone-editor"' in text
+
+
+def test_history_can_be_filtered_by_camera(tmp_path):
+    from sahabat.riwayat import Riwayat
+    engine = StubEngine()
+    engine.riwayat = Riwayat(tmp_path, background=False)
+    engine.riwayat.event(0.0, "jatuh", "full", [1], kamera="k1", kamera_nama="Lorong")
+    engine.riwayat.event(0.0, "kekerasan", "full", [2, 3])
+    with TestClient(create_app(engine)) as c:
+        assert len(c.get("/api/riwayat").json()["kejadian"]) == 2
+        only = c.get("/api/riwayat?kamera=k1").json()["kejadian"]
+        assert [k["kamera_nama"] for k in only] == ["Lorong"]

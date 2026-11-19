@@ -423,3 +423,65 @@ def test_screen_picture_shows_the_zone():
     import cv2
     img = cv2.imdecode(np.frombuffer(e.latest_jpeg(), np.uint8), cv2.IMREAD_COLOR)
     assert img[240, 600].mean() < 150 and img[240, 100].mean() > 180     # kanan (di luar zona) digelapkan
+
+
+class CameraRiwayat(FakeRiwayat):
+    def frame(self, t, jpeg, kamera=""):
+        self.frames.append((t, kamera))
+
+    def event(self, t, jenis, mode, ids, sumber="model", kamera="", kamera_nama=""):
+        self.events.append((jenis, kamera, kamera_nama))
+
+
+def test_engine_tells_riwayat_its_camera():
+    r = CameraRiwayat()
+    run(Engine(Config(), None, FakePose(fall_script), riwayat=r, kamera=("k1", "Lorong")), seconds=6.0)
+    assert r.events == [("jatuh", "k1", "Lorong")] and {k for _, k in r.frames} == {"k1"}
+
+
+def test_latest_jpeg_can_be_small_for_grid_tiles():
+    import cv2
+
+    class Src:
+        version, fps = 0, 0.0
+
+        def read(self):
+            return 1.0, np.full((480, 640, 3), 60, np.uint8)
+    e = Engine(Config(), Src(), FakePose(lambda t: []))
+    e._input_version = 0
+    small = cv2.imdecode(np.frombuffer(e.latest_jpeg(width=480, quality=60), np.uint8), cv2.IMREAD_COLOR)
+    full = cv2.imdecode(np.frombuffer(e.latest_jpeg(), np.uint8), cv2.IMREAD_COLOR)
+    assert small.shape[:2] == (360, 480) and full.shape[:2] == (480, 640)
+
+
+def test_pause_stops_steps_without_closing_and_resume_continues():
+    import time
+    r = FakeRiwayat()
+
+    class Src:
+        version, fps = 0, 0.0
+
+        def packet(self):
+            return 0, (time.monotonic(), np.zeros((48, 64, 3), np.uint8))
+
+        def read(self):
+            return None
+
+    class CountingPose:
+        calls = 0
+
+        def detect(self, frame):
+            CountingPose.calls += 1
+            return []
+    e = Engine(Config(), Src(), CountingPose(), riwayat=r)
+    e.start()
+    time.sleep(0.3)
+    e.pause()
+    paused_at = CountingPose.calls
+    time.sleep(0.3)
+    assert paused_at > 0 and CountingPose.calls == paused_at and e._thread is None and not r.closed
+    e.resume()
+    time.sleep(0.3)
+    assert CountingPose.calls > paused_at
+    e.stop()
+    assert r.closed

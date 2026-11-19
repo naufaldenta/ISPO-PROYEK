@@ -101,6 +101,58 @@ class YoloPose:
         return [Person(int(ids[i]), xy[i], conf[i], tuple(float(v) for v in xyxy[i])) for i in range(len(ids))]
 
 
+class SharedPose:
+    """Satu model pose untuk banyak kamera (Mode CCTV), dengan pelacak ByteTrack sendiri per kamera.
+
+    Ultralytics menyimpan pelacak di `predictor.trackers` dan, dengan persist=True, memakainya ulang. Sebelum menilai
+    satu kamera, daftar itu ditukar dengan milik kamera tersebut, lalu disimpan kembali sesudahnya. Nomor orang
+    diberikan per pelacak (Ultralytics 8.4: `BYTETracker._ids`), jadi setiap kamera menjalankan algoritma yang persis
+    sama dengan Mode Pameran. Pelacak kamera lain tidak pernah di-reset.
+    """
+
+    def __init__(self, pose) -> None:
+        import threading
+        self.pose = pose
+        self.imgsz = getattr(pose, "imgsz", None)
+        self._trackers: dict[str, list] = {}
+        self._lock = threading.Lock()
+
+    def detect(self, cam_id: str, frame: np.ndarray) -> list[Person]:
+        with self._lock:
+            predictor = getattr(self.pose._model, "predictor", None)
+            if predictor is not None:
+                predictor.trackers = self._trackers.get(cam_id, [])
+                predictor.vid_path = [None]
+            try:
+                return self.pose.detect(frame)
+            finally:
+                predictor = getattr(self.pose._model, "predictor", None)
+                if predictor is not None:
+                    self._trackers[cam_id] = predictor.trackers
+
+    def reset(self, cam_id: str) -> None:
+        """Melupakan nomor orang satu kamera (sumbernya berganti); pelacak baru dibuat pada penilaian berikutnya."""
+        with self._lock:
+            self._trackers[cam_id] = []
+
+    def forget(self, cam_id: str) -> None:
+        with self._lock:
+            self._trackers.pop(cam_id, None)
+
+
+class CameraPose:
+    """PoseProvider untuk satu kamera di atas SharedPose; dipakai Engine seperti YoloPose."""
+
+    def __init__(self, shared: SharedPose, cam_id: str) -> None:
+        self.shared, self.cam_id = shared, cam_id
+
+    def detect(self, frame: np.ndarray) -> list[Person]:
+        return self.shared.detect(self.cam_id, frame)
+
+    def reset(self) -> None:
+        self.shared.reset(self.cam_id)
+
+
 def _check() -> int:
     import cv2
 

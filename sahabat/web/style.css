@@ -322,3 +322,49 @@ body.remote #words { cursor: default; }
   #top-row > *, #top-row button { font-size: 13px !important; padding: 5px 10px !important; }
   #bar-buttons button { font-size: 16px; padding: 10px 14px; }
 }
+
+/* ---- Mode CCTV: grid banyak kamera ---- */
+#grid {
+  position: fixed; top: 7.5vh; left: 1vw; right: 1vw; bottom: calc(var(--bar-h) + 1vh);
+  display: grid; gap: 1vh; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr);
+}
+.tile {
+  position: relative; min-width: 0; min-height: 0; overflow: hidden; border-radius: 10px; background: #111;
+  border: 3px solid #2b333d; cursor: pointer; padding: 0; color: #fff; font: inherit;
+}
+.tile img { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.tile[data-red="1"] { border-color: var(--red); animation: tile-pulse 0.9s ease-in-out infinite; }
+@keyframes tile-pulse { 50% { border-color: #ff9f97; } }
+@media (prefers-reduced-motion: reduce) { .tile[data-red="1"] { animation: none; } }
+.tile-name, .tile-status {
+  position: absolute; padding: 0.4vh 0.8vw; border-radius: 6px; background: rgba(10, 14, 20, 0.78);
+  font-size: min(2.2vh, 1.6vw); font-weight: 700; white-space: nowrap; max-width: 90%; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-name { top: 0.6vh; left: 0.6vw; }
+.tile-status { bottom: 0.6vh; right: 0.6vw; }
+.tile-status[data-status="penuh"] { color: #7ee2a1; }
+.tile-status[data-status="siaga"] { color: #c7d0db; }
+.tile-status[data-status="lambat"] { color: #ffd43b; }
+.tile-status[data-status="terputus"] { color: #ff9f97; }
+.tile-bar {
+  position: absolute; left: 0; right: 0; top: 40%; text-align: center; padding: 0.8vh; background: rgba(217, 45, 32, 0.88);
+  font-weight: 800; font-size: min(3vh, 2vw);
+}
+#grid-back { position: fixed; top: 8vh; left: 1.5vw; font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+body.cctv #bar-text { white-space: normal; text-align: center; font-size: min(4.6vh, 2.6vw); }
+body.cctv[data-bar="jatuh"] #bar-text, body.cctv[data-bar="kekerasan"] #bar-text { font-size: min(4.6vh, 2.6vw); }
+#ack-all { background: #fff; color: #8f1d14; }
+#history-kamera { font: inherit; font-size: 15px; padding: 8px; border-radius: 8px; max-width: 40%; }
+.kamera-cctv { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border-radius: 10px;
+  background: #223042; margin-bottom: 8px; }
+#kamera-dialog #cctv-toggle[data-on="1"] { background: var(--green); }
+#cctv-message { margin: 0; flex: 1 1 220px; }
+.kamera-flags { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+#kamera-dialog .kamera-flags label { display: flex; align-items: center; gap: 6px; font-weight: 400; margin: 0; flex: 0 0 auto; }
+@media (max-width: 640px) {
+  #grid { top: 15vh; grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(28vh, 1fr); overflow-y: auto; }
+  #grid-back { top: 15vh; }
+  .tile-name, .tile-status { font-size: 13px; }
+}
+body.remote #cctv-toggle { display: none !important; }

@@ -25,7 +25,7 @@ VIDEO_EXTENSIONS = (".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".m4v")
 _SETTINGS_LOCK = threading.RLock()
 
 LOCAL_FIELDS = ("imgsz", "tuned_for", "slow", "port", "camera", "words_enabled", "microphone",
-                "camera_flip", "clips_enabled", "zone", "lan_enabled", "lan_code")
+                "camera_flip", "clips_enabled", "zone", "lan_enabled", "lan_code", "cctv_enabled")
 
 
 @dataclass
@@ -34,6 +34,10 @@ class Config:
     rate_hz: float = 10.0
     fps_target: float = 10.0
     fps_floor: float = 8.0
+    cctv_enabled: bool = False        # Mode CCTV menyala saat SAHABAT dimulai (disimpan dari layar)
+    cctv_hold_s: float = 5.0          # Mode CCTV: kamera tetap penuh selama ini sesudah orang terakhir terlihat
+    cctv_safety_s: float = 5.0        # kamera siaga tetap dinilai pose sekali tiap selang ini
+    cctv_motion_hz: float = 5.0       # laju cek gerak murah kamera siaga
     imgsz_candidates: tuple[int, ...] = (480, 416, 320)
     imgsz: int | None = None          # hasil autotune
     tuned_for: str | None = None      # platform.node() saat autotune
