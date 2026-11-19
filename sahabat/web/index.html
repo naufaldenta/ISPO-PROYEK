@@ -133,8 +133,14 @@
           <button id="lan-new-code" type="button">Ganti kode akses</button>
         </div>
       </div>
-      <p class="lan-note">Pertama kali dinyalakan, Windows bisa menanyakan izin jaringan untuk Python: pilih
-        <b>Izinkan akses</b> (jaringan pribadi). Mengganti kode akses langsung memutus semua layar lain.</p>
+      <div id="lan-firewall" hidden>
+        <p id="lan-firewall-text"></p>
+        <button id="lan-firewall-allow" type="button">Izinkan akses dari HP</button>
+      </div>
+      <p class="lan-note"><b>HP masih memuat terus?</b> Pastikan HP memakai WiFi yang sama (bukan data seluler).
+        WiFi umum seperti WiFi kos, kafe, atau WiFi tamu sering memblokir sesama perangkat. Bila begitu, nyalakan
+        hotspot di HP guru, sambungkan laptop ini ke hotspot itu, lalu pindai kode QR yang baru. Mengganti kode
+        akses langsung memutus semua layar lain.</p>
     </div>
     <p id="lan-message" role="status" aria-live="polite"></p>
   </dialog>

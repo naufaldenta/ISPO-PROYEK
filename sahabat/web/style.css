@@ -270,6 +270,9 @@ body.remote #words { cursor: default; }
 #lan-code { font-size: 34px; font-weight: 800; letter-spacing: 6px; color: #ffd43b !important; margin: 4px 0 8px; }
 .lan-step { margin: 0 0 6px; }
 .lan-note { font-size: 13px; }
+#lan-firewall { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: #5c1f1f; }
+#lan-firewall p { margin: 0 0 10px; color: #fff !important; }
+#lan-dialog #lan-firewall-allow { background: #ffd43b; color: #111; font-weight: 700; }
 #lan-message { min-height: 22px; font-size: 14px; }
 @media (max-width: 640px) { .lan-grid { grid-template-columns: 1fr; } }
 

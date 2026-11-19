@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import DATA_DIR, MODELS_DIR, SETTINGS_PATH, WORDS_PATH, Config, load
 from .engine import SLOW_TEXT, Engine
-from .jaringan import COOKIE, is_local, qr_png
+from .jaringan import COOKIE, allow_firewall, firewall_status, is_local, qr_png
 from .listener import STATUS_LABEL, Listener
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -256,6 +256,18 @@ def create_app(engine, listener=None, inputs=None, lan=None) -> FastAPI:
         except OSError:
             pass
         return {"ok": not status["galat"], **status}
+
+    @app.get("/api/jaringan/firewall")
+    async def lan_firewall():
+        """Apakah Windows Firewall mengizinkan HP masuk. Butuh beberapa detik, jadi terpisah dari /api/jaringan."""
+        return {"ok": True, "firewall": await run_in_threadpool(firewall_status)}
+
+    @app.post("/api/jaringan/firewall")
+    async def lan_firewall_allow():
+        """Memasang aturan izin firewall; Windows meminta persetujuan admin di laptop ini."""
+        if not await run_in_threadpool(allow_firewall):
+            return {"ok": False, "error": "Izin admin tidak diberikan. Coba lagi dan pilih Ya."}
+        return {"ok": True}
 
     @app.post("/api/jaringan/kode")
     async def lan_new_code():

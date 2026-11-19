@@ -10,7 +10,9 @@ import cv2
 import numpy as np
 
 from sahabat.engine import BAR_TEXT, Snapshot
+from sahabat.jaringan import LanServer
 from sahabat.listener import NOTICE_TEXT, STATUS_LABEL, ListenState
+from sahabat import server
 from sahabat.server import create_app
 
 
@@ -54,7 +56,11 @@ class StubListener:
 def app():
     engine = StubEngine()
     listener = StubListener()
-    application = create_app(engine, listener)
+    # panel "HP / laptop lain" ikut tampil; server keduanya hanya di 127.0.0.1 supaya tidak memicu firewall
+    server.remember_lan = lambda on, code: None             # jangan menulis ke pengaturan laptop sungguhan
+    lan = LanServer(0, "ABCD2345", host="127.0.0.1", addresses=lambda: ["192.168.1.13"])
+    application = create_app(engine, listener, lan=lan)
+    lan.app = application
 
     @application.get("/stub-kata")
     async def set_words(status: str = "hidup", teks: str = ""):

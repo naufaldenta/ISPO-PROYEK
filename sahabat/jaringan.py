@@ -7,9 +7,13 @@ tetap hanya dari laptop SAHABAT.
 """
 from __future__ import annotations
 
+import base64
 import ipaddress
+import re
 import secrets
 import socket
+import subprocess
+import sys
 import threading
 
 import cv2
@@ -36,28 +40,126 @@ def is_local(host: str | None) -> bool:
         return False
 
 
-def lan_addresses() -> list[str]:
-    """Alamat IPv4 laptop ini di jaringan lokal, yang paling mungkin dipakai lebih dulu."""
-    found: list[str] = []
-    try:                                             # tidak mengirim apa pun; hanya menanyakan rute keluar
+# Adaptor virtual (VMware, VirtualBox, Hyper-V/WSL, Docker, VPN) punya alamat 192.168.x.x juga, tetapi HP tidak bisa
+# menjangkaunya. Alamat itu tidak ditampilkan supaya guru tidak memindai alamat yang salah.
+VIRTUAL_ADAPTER = re.compile(r"vmware|virtualbox|vbox|vethernet|hyper-v|wsl|docker|loopback|bluetooth|npcap|"
+                             r"tap-|tailscale|zerotier|wireguard|vpn", re.I)
+
+
+def _route_address() -> str | None:
+    """Alamat yang dipakai laptop untuk keluar ke jaringan. Tidak mengirim apa pun; hanya menanyakan rute."""
+    try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("10.255.255.255", 1))
-            found.append(s.getsockname()[0])
+            return s.getsockname()[0]
     except OSError:
-        pass
+        return None
+
+
+def _interfaces() -> dict[str, str] | None:
+    """Alamat IPv4 -> nama adaptor yang sedang tersambung. None bila psutil tidak bisa dipakai."""
     try:
-        found += socket.gethostbyname_ex(socket.gethostname())[2]
-    except OSError:
-        pass
-    out = []
-    for ip in found:
+        import psutil
+        stats = psutil.net_if_stats()
+        out = {}
+        for name, addrs in psutil.net_if_addrs().items():
+            if name in stats and not stats[name].isup:
+                continue
+            for a in addrs:
+                if a.family == socket.AF_INET:
+                    out[a.address] = name
+        return out
+    except Exception:                                        # psutil tidak ada atau gagal membaca adaptor
+        return None
+
+
+def _usable(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return addr.version == 4 and not addr.is_loopback and not addr.is_link_local and not addr.is_unspecified
+
+
+def lan_addresses(route=_route_address, interfaces=_interfaces) -> list[str]:
+    """Alamat IPv4 laptop ini di jaringan lokal, yang paling mungkin dipakai lebih dulu (WiFi/LAN, bukan VMware)."""
+    first = route()
+    names = interfaces()
+    if names is None:                                        # tanpa nama adaptor: cara lama
+        found = [first] if first else []
         try:
-            addr = ipaddress.ip_address(ip)
-        except ValueError:
-            continue
-        if addr.version == 4 and not addr.is_loopback and not addr.is_link_local and ip not in out:
-            out.append(ip)
-    return out
+            found += socket.gethostbyname_ex(socket.gethostname())[2]
+        except OSError:
+            pass
+        return list(dict.fromkeys(ip for ip in found if _usable(ip)))
+    found = ([first] if first else []) + list(names)
+    real = [ip for ip in found if _usable(ip) and ip in names and not VIRTUAL_ADAPTER.search(names[ip])]
+    return list(dict.fromkeys(real))
+
+
+# ---- Windows Firewall ----
+# Tanpa aturan izin, Windows membuang koneksi dari HP tanpa pesan apa pun (terutama di WiFi berprofil "Publik"),
+# sehingga HP hanya memuat terus. Aturan ini hanya membuka program Python SAHABAT, hanya TCP, dan hanya untuk
+# perangkat di jaringan lokal yang sama (LocalSubnet). Pemasangannya selalu lewat persetujuan admin (UAC).
+FIREWALL_RULE = "SAHABAT Sekolah (HP dan laptop lain)"
+
+
+def _ps_quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _encoded(script: str) -> str:
+    return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+
+def firewall_script_status(program: str) -> str:
+    return "; ".join([
+        f"$p = {_ps_quote(program)}",
+        "if (-not @(Get-NetFirewallProfile | Where-Object { $_.Enabled }).Count) { 'tidak-perlu'; exit }",
+        "$r = @(Get-NetFirewallApplicationFilter -Program $p -ErrorAction SilentlyContinue | "
+        "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' })",
+        "if ($r | Where-Object { $_.Action -eq 'Block' }) { 'diblokir' } "
+        "elseif ($r | Where-Object { $_.Action -eq 'Allow' }) { 'izin' } else { 'belum' }",
+    ])
+
+
+def firewall_script_allow(program: str) -> str:
+    return "; ".join([
+        f"$p = {_ps_quote(program)}",
+        f"Remove-NetFirewallRule -DisplayName {_ps_quote(FIREWALL_RULE)} -ErrorAction SilentlyContinue",
+        "Get-NetFirewallApplicationFilter -Program $p -ErrorAction SilentlyContinue | "
+        "Get-NetFirewallRule -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' } | Disable-NetFirewallRule",
+        f"New-NetFirewallRule -DisplayName {_ps_quote(FIREWALL_RULE)} -Direction Inbound -Action Allow "
+        "-Program $p -Protocol TCP -RemoteAddress LocalSubnet -Profile Any | Out-Null",
+    ])
+
+
+def firewall_status(program: str | None = None) -> str:
+    """izin / belum / diblokir / tidak-perlu (bukan Windows atau firewall mati) / tidak-diketahui."""
+    if sys.platform != "win32":
+        return "tidak-perlu"
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                              _encoded(firewall_script_status(program or sys.executable))],
+                             capture_output=True, text=True, timeout=20,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return "tidak-diketahui"
+    word = out.stdout.strip().splitlines()[-1].strip() if out.stdout.strip() else ""
+    return word if word in ("izin", "belum", "diblokir", "tidak-perlu") else "tidak-diketahui"
+
+
+def allow_firewall(program: str | None = None) -> bool:
+    """Meminta Windows memasang aturan izin. Windows menampilkan jendela persetujuan admin (UAC); True bila disetujui
+    dan dijalankan. Hasilnya diperiksa ulang dengan firewall_status()."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    args = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " + _encoded(
+        firewall_script_allow(program or sys.executable))
+    return ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", args, None, 0) > 32
 
 
 def qr_png(text: str, module_px: int = 8, border: int = 4) -> bytes:

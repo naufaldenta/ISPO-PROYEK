@@ -7,7 +7,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from sahabat.jaringan import CODE_ALPHABET, COOKIE, LanServer, is_local, lan_addresses, new_code, qr_png
+from sahabat import jaringan
+from sahabat.jaringan import (CODE_ALPHABET, COOKIE, LanServer, firewall_script_allow, firewall_status,
+                              is_local, lan_addresses, new_code, qr_png)
 from sahabat.server import create_app
 from tests.test_server import StubEngine
 
@@ -70,6 +72,59 @@ def test_qr_code_holds_the_address():
 def test_lan_addresses_are_ipv4_strings():
     for ip in lan_addresses():
         assert ip.count(".") == 3 and not ip.startswith("127.")
+
+
+def test_lan_addresses_skip_virtual_adapters():
+    names = {"192.168.198.1": "VMware Network Adapter VMnet8", "192.168.76.1": "VMware Network Adapter VMnet1",
+             "172.20.0.1": "vEthernet (WSL)", "192.168.1.13": "Wi-Fi", "127.0.0.1": "Loopback Pseudo-Interface 1"}
+    assert lan_addresses(route=lambda: "192.168.1.13", interfaces=lambda: names) == ["192.168.1.13"]
+
+
+def test_lan_addresses_skip_a_vpn_route_but_keep_wifi_and_cable():
+    names = {"100.64.0.5": "Tailscale", "192.168.1.13": "Wi-Fi", "10.0.0.7": "Ethernet"}
+    assert lan_addresses(route=lambda: "100.64.0.5", interfaces=lambda: names) == ["192.168.1.13", "10.0.0.7"]
+
+
+def test_lan_addresses_fall_back_without_adapter_names():
+    assert lan_addresses(route=lambda: "192.168.1.13", interfaces=lambda: None)[0] == "192.168.1.13"
+
+
+def test_firewall_rule_is_narrow_and_quotes_the_path():
+    script = firewall_script_allow(r"C:\Guru's PC\python.exe")
+    assert r"'C:\Guru''s PC\python.exe'" in script
+    assert "-Direction Inbound -Action Allow" in script and "-Protocol TCP" in script
+    assert "-RemoteAddress LocalSubnet" in script
+
+
+def test_firewall_status_reads_powershell(monkeypatch):
+    class Done:
+        stdout = "belum\r\n"
+    monkeypatch.setattr(jaringan.sys, "platform", "win32")
+    monkeypatch.setattr(jaringan.subprocess, "run", lambda *a, **k: Done())
+    assert firewall_status("python.exe") == "belum"
+    Done.stdout = "Galat aneh"
+    assert firewall_status("python.exe") == "tidak-diketahui"
+    monkeypatch.setattr(jaringan.sys, "platform", "linux")
+    assert firewall_status("python.exe") == "tidak-perlu"
+
+
+def test_laptop_checks_and_opens_the_firewall_but_phone_cannot(monkeypatch):
+    from sahabat import server
+    asked = []
+    monkeypatch.setattr(server, "firewall_status", lambda: "belum")
+    monkeypatch.setattr(server, "allow_firewall", lambda: asked.append(1) or True)
+    app = create_app(StubEngine(), lan=FakeLan())
+    with TestClient(app) as laptop:
+        assert laptop.get("/api/jaringan/firewall").json() == {"ok": True, "firewall": "belum"}
+        assert laptop.post("/api/jaringan/firewall").json() == {"ok": True}
+    monkeypatch.setattr(server, "allow_firewall", lambda: False)
+    with TestClient(app) as laptop:
+        assert laptop.post("/api/jaringan/firewall").json()["ok"] is False
+    with phone(app) as p:
+        p.cookies.set(COOKIE, "ABCD2345")
+        assert p.get("/api/jaringan/firewall").status_code == 403
+        assert p.post("/api/jaringan/firewall").status_code == 403
+    assert asked == [1]
 
 
 def test_phone_is_refused_while_lan_is_off():

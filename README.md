@@ -90,8 +90,15 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 **Buka di HP atau laptop lain.** Tekan **HP / laptop lain**, lalu nyalakan **Jaringan lokal**. Pindai kode QR dengan
 kamera HP (atau buka alamat yang tertulis dan ketik kode aksesnya). HP harus tersambung ke WiFi yang sama dengan
 laptop SAHABAT. Dari HP, guru bisa melihat layar, mendengar alarm, menekan **Sudah diperiksa**, dan membuka
-**Riwayat**; pengaturan tetap hanya dari laptop SAHABAT. Pertama kali dinyalakan, Windows bisa menanyakan izin
-jaringan untuk Python: pilih **Izinkan akses**. **Ganti kode akses** langsung memutus semua layar lain.
+**Riwayat**; pengaturan tetap hanya dari laptop SAHABAT. **Ganti kode akses** langsung memutus semua layar lain.
+
+Bila HP hanya memuat terus:
+1. Bila panel menampilkan kotak merah **Windows Firewall masih menutup akses dari HP**, tekan **Izinkan akses dari
+   HP** lalu pilih **Ya** di jendela izin Windows. Cukup sekali per laptop. Aturan ini hanya membuka program SAHABAT
+   untuk perangkat di jaringan lokal yang sama.
+2. Pastikan HP memakai WiFi yang sama, bukan data seluler.
+3. WiFi umum (kos, kafe, WiFi tamu sekolah) sering memblokir sesama perangkat. Nyalakan hotspot di HP guru,
+   sambungkan laptop SAHABAT ke hotspot itu, lalu pindai kode QR yang baru.
 
 **Video cadangan.** Bila kamera bermasalah saat demo, buka **Perangkat**, tekan **Tambah video…** (atau salin video
 ke folder `video/` lalu **Cari ulang**), pilih videonya di daftar Kamera, lalu **Terapkan**. Video diputar berulang
