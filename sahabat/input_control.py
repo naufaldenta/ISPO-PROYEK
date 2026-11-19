@@ -6,11 +6,14 @@ from pathlib import Path
 
 from .config import SETTINGS_PATH, VIDEO_DIR, update_local
 from .devices import VIDEO_PREFIX, list_cameras, list_microphones, list_videos
+from .kamera import IPCAM_PREFIX
 
 
 class InputDevices:
-    def __init__(self, engine, listener, settings_path: Path = SETTINGS_PATH, video_dir: Path = VIDEO_DIR):
+    def __init__(self, engine, listener, settings_path: Path = SETTINGS_PATH, video_dir: Path = VIDEO_DIR,
+                 kamera=None):
         self.engine, self.listener = engine, listener
+        self.kamera = kamera                # KameraStore; None = tanpa kamera CCTV di panel Perangkat
         self.settings_path = Path(settings_path)
         self.video_dir = Path(video_dir)
         self._lock = threading.Lock()
@@ -26,8 +29,13 @@ class InputDevices:
     def status(self) -> dict:
         source, listener = self.engine.source, self.listener
         camera = self._shown(source.spec)
+        cctv = isinstance(camera, str) and camera.startswith(IPCAM_PREFIX)
+        name = ""
+        if cctv and self.kamera is not None:
+            name = next((c["name"] for c in self.kamera.catalog() if c["id"] == camera), "")
         return {"camera": camera,
                 "camera_is_video": isinstance(camera, str) and camera.startswith(VIDEO_PREFIX),
+                "camera_is_cctv": cctv, "camera_name": name,
                 "microphone": listener.microphone if listener is not None else self.engine.cfg.microphone,
                 "camera_connected": source.read() is not None,
                 "camera_error": source.error,
@@ -36,7 +44,8 @@ class InputDevices:
                 "microphone_available": listener is not None}
 
     def scan(self) -> dict:
-        result = {"cameras": [], "microphones": [], "errors": [], "videos": list_videos(self.video_dir)}
+        result = {"cameras": [], "microphones": [], "errors": [], "videos": list_videos(self.video_dir),
+                  "ipcams": self.kamera.catalog() if self.kamera is not None else []}
         for field, discover in (("cameras", list_cameras), ("microphones", list_microphones)):
             try:
                 result[field] = [{"id": d["id"], "name": d["name"]} for d in discover()]
@@ -60,6 +69,11 @@ class InputDevices:
                 if name == "camera" and isinstance(value, str) and value.startswith(VIDEO_PREFIX):
                     if value not in {d["id"] for d in list_videos(self.video_dir)}:
                         raise ValueError("Video pilihan tidak ditemukan di folder video. Tekan Cari ulang.")
+                    changes[name] = value
+                    continue
+                if name == "camera" and isinstance(value, str) and value.startswith(IPCAM_PREFIX):
+                    if self.kamera is None or value not in {d["id"] for d in self.kamera.catalog()}:
+                        raise ValueError("Perangkat pilihan tidak ditemukan. Tekan Cari ulang.")
                     changes[name] = value
                     continue
                 if value is not None and (not isinstance(value, str) or value not in {d["id"] for d in catalog()}):

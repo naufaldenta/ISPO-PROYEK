@@ -81,6 +81,7 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | **Sudah diperiksa** atau tombol **Spasi** | Mematikan alarm setelah guru memeriksa |
 | **Senyap** | Mematikan bunyi alarm |
 | **Perangkat** | Memilih kamera, mikrofon, video cadangan, dan volume alarm (ada tombol **Coba bunyi**) |
+| **Kamera** | Menambah kamera CCTV: IP camera, channel DVR/NVR, HP sebagai kamera, atau capture card DVR |
 | **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
 | **Zona** | Menggambar area yang dipantau; orang yang titik tengah badannya di luar zona tidak dinilai |
 | **HP / laptop lain** | Membuka layar ini dari HP atau laptop lain di WiFi yang sama (kode QR + kode akses) |
@@ -99,6 +100,28 @@ Bila HP hanya memuat terus:
 2. Pastikan HP memakai WiFi yang sama, bukan data seluler.
 3. WiFi umum (kos, kafe, WiFi tamu sekolah) sering memblokir sesama perangkat. Nyalakan hotspot di HP guru,
    sambungkan laptop SAHABAT ke hotspot itu, lalu pindai kode QR yang baru.
+
+**Menyambungkan CCTV atau IP camera.** Laptop SAHABAT harus tersambung ke jaringan yang sama dengan kamera atau
+DVR/NVR, lewat kabel LAN atau WiFi. Tekan **Kamera**, lalu pilih salah satu cara:
+
+- **Cari otomatis**: mencari kamera yang mendukung ONVIF di jaringan. Pilih kameranya, isi nama pengguna dan kata
+  sandi, lalu tekan **Ambil alamat stream**. Banyak kamera dan DVR murah tidak mendukung pencarian ini.
+- **Pilih merek**: isi IP, channel, nama pengguna, dan kata sandi. Merek yang tersedia: Hikvision/HiLook, Dahua,
+  Uniview, TP-Link Tapo/VIGI, EZVIZ, Imou, DVR/NVR murah (XMeye/iCSee), dan HP Android dengan aplikasi
+  **IP Webcam** (`http://<ip-hp>:8080/video`). Pilih **Substream** supaya laptop tidak berat.
+- **Alamat lengkap**: tempel alamat `rtsp://…` atau `http://…` dari teknisi atau dari aplikasi kamera.
+- **Capture card DVR**: untuk DVR tanpa jaringan, sambungkan keluaran HDMI DVR ke capture card USB.
+
+Bila gambar berisi tampilan beberapa kamera sekaligus (mosaik DVR), pilih ukuran grid dan nomor ubinnya. Gambar
+satu ubin berukuran kecil, jadi deteksinya kurang akurat dibanding channel kamera langsung.
+
+Tekan **Tes sambungan** untuk melihat cuplikan, ukuran gambar, dan laju kamera, atau alasan gagalnya (misalnya kata
+sandi salah, alamat tidak ditemukan, atau kamera tidak menjawab). Lalu tekan **Simpan** dan **Pakai**. Kamera
+tersimpan juga muncul di daftar Kamera pada panel **Perangkat**. Kata sandi disimpan terenkripsi di laptop itu
+(Windows DPAPI) dan tidak pernah ditampilkan; di laptop atau akun Windows lain, kata sandinya perlu diisi ulang.
+
+Pola alamat tiap merek diambil dari dokumentasi pabrikan dan baru diuji dengan kamera tiruan. Bila satu merek
+gagal, coba channel lain, matikan Substream, atau pakai **Alamat lengkap** dari aplikasi kamera.
 
 **Video cadangan.** Bila kamera bermasalah saat demo, buka **Perangkat**, tekan **Tambah video…** (atau salin video
 ke folder `video/` lalu **Cari ulang**), pilih videonya di daftar Kamera, lalu **Terapkan**. Video diputar berulang
@@ -192,7 +215,7 @@ Rincian lengkap ada di [Laporan Teknis SAHABAT Sekolah](docs/Laporan-Teknis-SAHA
 | RAM | 8 GB | 14 GB |
 | Kartu grafis | Tidak perlu | Radeon Vega 8 terpadu (tidak dipakai) |
 | Ruang disk | 3 GB | |
-| Kamera | Webcam USB atau bawaan laptop | Webcam bawaan |
+| Kamera | Webcam USB atau bawaan laptop, IP camera, atau channel DVR/NVR (RTSP) | Webcam bawaan |
 | Internet | Hanya saat penyalaan pertama | |
 
 Di laptop pengembang, model pose berjalan 18,7 frame per detik pada resolusi 416 dan penilaian kedua model memakan
@@ -245,6 +268,8 @@ runtime\python\python.exe -m latih.putar data\rekaman\<folder-rekaman> --set vio
   3 detik sesudah, dengan kerangka tubuh) di `data/riwayat`, hanya di laptop itu sendiri, dan terhapus otomatis
   setelah 7 hari. Penyimpanan klip bisa dimatikan dari panel **Riwayat**; kejadian tetap dicatat tanpa video.
 - Log penilaian berupa angka disimpan di `data/log` dan dihapus otomatis setelah 14 hari.
+- Daftar kamera CCTV disimpan di `data/kamera.json` dengan kata sandi terenkripsi. Alamat yang tampil di layar
+  dan di pesan galat selalu disamarkan (`rtsp://admin:••••@…`).
 - Akses dari jaringan lokal mati secara bawaan. Bila dinyalakan, gambar hanya dikirim ke perangkat di jaringan yang
   sama yang memakai kode akses, tidak pernah ke internet.
 - Sistem tidak mengenali wajah atau identitas. Nomor orang hanya berlaku selama orang itu terlihat.

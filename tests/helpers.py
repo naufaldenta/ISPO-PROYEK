@@ -64,3 +64,14 @@ def feed(history, people_at, t0=0.0, seconds=1.0, hz=10.0):
     for t in ticks(t0, seconds, hz):
         history.update(t, people_at(t))
     return t
+
+
+def wait_for(pred, timeout_s: float) -> bool:
+    """True begitu pred() benar, False bila waktu habis (dicek tiap 0,05 dtk)."""
+    import time
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return bool(pred())

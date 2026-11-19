@@ -14,6 +14,7 @@
     <button id="words" type="button" data-status="memuat" title="Tombol M">Kata kasar: memuat…</button>
     <button id="flip" type="button" title="Tombol C">Balik kiri-kanan: mati</button>
     <button id="devices" type="button">Perangkat</button>
+    <button id="kamera" type="button">Kamera</button>
     <button id="history" type="button" hidden>Riwayat <span id="history-count" hidden>0</span></button>
     <button id="zone" type="button" hidden>Zona</button>
     <button id="lan" type="button" hidden>HP / laptop lain</button>
@@ -145,10 +146,95 @@
     <p id="lan-message" role="status" aria-live="polite"></p>
   </dialog>
 
+  <dialog id="kamera-dialog" aria-labelledby="kamera-title">
+    <div class="history-head">
+      <h2 id="kamera-title">Kamera CCTV</h2>
+      <button id="kamera-close" type="button">Tutup</button>
+    </div>
+    <p>Sambungkan IP camera, channel DVR/NVR CCTV, atau HP (aplikasi IP Webcam). Laptop harus tersambung ke jaringan
+      yang sama dengan kamera. Kata sandi kamera disimpan terenkripsi di laptop ini dan tidak pernah ditampilkan.</p>
+    <h3>Kamera tersimpan</h3>
+    <ul id="kamera-list"></ul>
+
+    <h3 id="kamera-form-title">Tambah kamera</h3>
+    <div class="kamera-modes" role="group" aria-label="Cara menambah kamera">
+      <button type="button" data-kamera-mode="cari">Cari otomatis</button>
+      <button type="button" data-kamera-mode="merek">Pilih merek</button>
+      <button type="button" data-kamera-mode="alamat">Alamat lengkap</button>
+      <button type="button" data-kamera-mode="perangkat">Capture card DVR</button>
+    </div>
+
+    <div id="kamera-cari-box" hidden>
+      <p class="device-hint">Mencari kamera yang mendukung ONVIF di jaringan ini. Kamera atau DVR murah sering tidak
+        mendukungnya; bila tidak ketemu, pakai <b>Pilih merek</b>.</p>
+      <button id="kamera-search" type="button">Cari di jaringan</button>
+      <div id="kamera-found"></div>
+      <div id="kamera-onvif" hidden>
+        <p id="kamera-onvif-title"></p>
+        <div class="kamera-row">
+          <label>Nama pengguna <input id="kamera-onvif-user" autocomplete="off" value="admin"></label>
+          <label>Kata sandi <input id="kamera-onvif-pass" type="password" autocomplete="new-password"></label>
+        </div>
+        <label class="kamera-check"><input id="kamera-onvif-sub" type="checkbox" checked> Substream (lebih ringan,
+          disarankan)</label>
+        <button id="kamera-onvif-go" type="button">Ambil alamat stream</button>
+      </div>
+    </div>
+
+    <form id="kamera-form" autocomplete="off">
+      <label>Nama kamera <input id="kamera-nama" maxlength="40" placeholder="misalnya Lorong lantai 1" required></label>
+      <div data-only="merek">
+        <label>Merek <select id="kamera-merek"></select></label>
+        <div class="kamera-row">
+          <label>Alamat IP <input id="kamera-host" placeholder="192.168.1.64"></label>
+          <label>Port <input id="kamera-port" type="number" min="1" max="65535"></label>
+          <label id="kamera-channel-wrap">Channel <input id="kamera-channel" type="number" min="1" max="64" value="1"></label>
+        </div>
+        <label class="kamera-check"><input id="kamera-sub" type="checkbox" checked> Substream (lebih ringan,
+          disarankan)</label>
+      </div>
+      <div data-only="alamat">
+        <label>Alamat lengkap <input id="kamera-alamat" placeholder="rtsp://192.168.1.64:554/..."></label>
+      </div>
+      <div data-only="perangkat">
+        <label>Capture card <select id="kamera-perangkat"></select></label>
+        <p class="device-hint">Untuk DVR tanpa jaringan: sambungkan keluaran HDMI DVR ke capture card USB.</p>
+      </div>
+      <div class="kamera-row" data-only="merek alamat">
+        <label>Nama pengguna <input id="kamera-pengguna" placeholder="admin"></label>
+        <label>Kata sandi <input id="kamera-sandi" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="kamera-row">
+        <label>Gambar berisi beberapa kamera (tampilan DVR)?
+          <select id="kamera-grid">
+            <option value="0">Tidak, satu kamera</option>
+            <option value="2">Ya, 2×2</option>
+            <option value="3">Ya, 3×3</option>
+            <option value="4">Ya, 4×4</option>
+          </select>
+        </label>
+        <label>&nbsp;<select id="kamera-ubin" hidden></select></label>
+      </div>
+      <p class="device-hint">Ubin dari tampilan DVR berukuran kecil, jadi deteksinya kurang akurat dibanding satu kamera
+        penuh. Bila bisa, pakai channel kamera langsung lewat jaringan.</p>
+      <div class="kamera-test">
+        <img id="kamera-preview" alt="Cuplikan dari kamera" hidden>
+        <p id="kamera-test-msg" role="status" aria-live="polite"></p>
+      </div>
+      <div class="device-actions">
+        <button id="kamera-cancel" type="button" hidden>Batal</button>
+        <button id="kamera-test" type="button">Tes sambungan</button>
+        <button id="kamera-save" type="submit">Simpan</button>
+      </div>
+    </form>
+    <p id="kamera-message" role="status" aria-live="polite"></p>
+  </dialog>
+
   <script src="/static/app.js"></script>
   <script src="/static/devices.js"></script>
   <script src="/static/history.js"></script>
   <script src="/static/zone.js"></script>
   <script src="/static/lan.js"></script>
+  <script src="/static/kamera.js"></script>
 </body>
 </html>

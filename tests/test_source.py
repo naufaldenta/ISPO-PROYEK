@@ -204,3 +204,201 @@ def test_video_files_are_never_flipped(tiny_video):
     finally:
         plain.stop()
         flipped.stop()
+
+
+# ---- kamera jaringan, CCTV, dan ubin DVR ----
+import sahabat.source as source_module  # noqa: E402
+from sahabat.kamera import Stream  # noqa: E402
+from sahabat.source import crop_tile, source_kind  # noqa: E402
+from tests.helpers import wait_for  # noqa: E402
+
+
+def test_kinds():
+    assert source_kind(None) == source_kind(0) == source_kind("camera:usb") == "webcam"
+    assert source_kind("rtsp://h/x") == source_kind("http://h:8080/video") == "jaringan"
+    assert source_kind("ipcam:k1") == "cctv" and source_kind("C:/v/a.mp4") == "file"
+
+
+def test_reads_mjpeg_stream_without_file_pacing(mjpeg_server):
+    src = VideoSource(mjpeg_server.url)
+    src.start()
+    try:
+        assert wait_for(lambda: src.read() is not None, 5)
+        assert wait_for(lambda: src.fps > 12, 5)               # file dipacu, stream jaringan tidak
+    finally:
+        src.stop()
+
+
+def test_ipcam_resolves_through_store_and_crops_tile(mjpeg_server):
+    src = VideoSource("ipcam:k1", resolve=lambda spec: Stream(mjpeg_server.url, (2, 3)))
+    src.start()
+    try:
+        assert wait_for(lambda: src.read() is not None, 5)
+        assert src.read()[1].shape == (180, 320, 3)
+    finally:
+        src.stop()
+
+
+def test_unknown_ipcam_sets_message_and_never_flips():
+    src = VideoSource("ipcam:hilang", flip=True, resolve=lambda spec: None)
+    src.start()
+    try:
+        assert wait_for(lambda: "tidak ada di daftar" in src.error, 3)
+    finally:
+        src.stop()
+    assert not VideoSource("rtsp://h/x", flip=True)._flips("rtsp://h/x")
+    assert not VideoSource("ipcam:k1", flip=True)._flips("ipcam:k1")
+
+
+def test_unreachable_camera_times_out_and_stops():              # Review Focus 2
+    src = VideoSource("ipcam:k1", retry_s=0.2,
+                      resolve=lambda s: Stream("rtsp://admin:rahasia@127.0.0.1:1/x", None))
+    src.start()
+    assert wait_for(lambda: src.error not in ("", "Menghubungkan kamera pilihan…"), 8)
+    assert "rahasia" not in src.error
+    t = time.monotonic()
+    src.stop()
+    assert time.monotonic() - t < 7 and src.read() is None
+
+
+def test_error_text_is_masked(monkeypatch):                     # Review Focus 3
+    def boom(url):
+        raise cv2.error("tidak bisa membuka " + url)
+    monkeypatch.setattr(source_module, "open_stream", boom)
+    src = VideoSource("ipcam:k1", retry_s=0.2, resolve=lambda s: Stream("http://admin:rahasia@h/x", None))
+    src.start()
+    try:
+        assert wait_for(lambda: "••••" in src.error, 3)
+        assert "rahasia" not in src.error
+    finally:
+        src.stop()
+
+
+def test_tile_crop_with_uneven_size():                          # Review Focus 4
+    frame = np.zeros((768, 1366, 3), np.uint8)
+    tiles = [crop_tile(frame, 3, i) for i in range(9)]
+    assert sum(t.shape[1] for t in tiles[:3]) == 1366 and sum(t.shape[0] for t in tiles[::3]) == 768
+
+
+# ---- perbaikan review akhir ----
+class _NetCapture:
+    """Capture tiruan: beberapa frame bagus, lalu tiap baca gagal setelah menunggu (stream macet)."""
+
+    def __init__(self, good=3, stall_s=1.0):
+        self.good, self.stall_s, self.reads = good, stall_s, 0
+
+    def isOpened(self):
+        return True
+
+    def read(self):
+        self.reads += 1
+        if self.reads <= self.good:
+            time.sleep(0.02)
+            return True, np.zeros((36, 64, 3), np.uint8)
+        time.sleep(self.stall_s)
+        return False, None
+
+    def release(self):
+        pass
+
+
+def test_stalled_network_stream_reconnects_quickly(monkeypatch):     # Final #5
+    opens = []
+    monkeypatch.setattr(source_module, "open_stream", lambda url: opens.append(time.monotonic()) or _NetCapture())
+    src = VideoSource("http://cam/video", retry_s=0.1)
+    src.start()
+    try:
+        assert wait_for(lambda: len(opens) >= 2, 9)               # lama: 15 baca x 1 dtk = 15 dtk sebelum buka ulang
+        assert opens[1] - opens[0] < 8
+    finally:
+        src.stop()
+
+
+def test_network_retry_backs_off(monkeypatch):                         # Final #4
+    opens = []
+
+    class Closed:
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+    monkeypatch.setattr(source_module, "open_stream", lambda url: opens.append(1) or Closed())
+    src = VideoSource("http://cam/video", retry_s=0.2)
+    src.start()
+    time.sleep(3.2)
+    src.stop()
+    assert 2 <= len(opens) <= 6                                      # tanpa jeda bertambah: sekitar 15 kali
+
+
+def test_wrong_rtsp_password_stops_retrying_until_changed(monkeypatch):   # Final #4
+    probes, opens = [], []
+    monkeypatch.setattr(source_module, "_rtsp_probe", lambda url, timeout_s=3.0: probes.append(url) or "sandi")
+    monkeypatch.setattr(source_module, "open_stream", lambda url: opens.append(url) or _NetCapture())
+    src = VideoSource("ipcam:k1", retry_s=0.1, resolve=lambda s: Stream("rtsp://admin:xyzzy@cam/x", None))
+    src.start()
+    try:
+        assert wait_for(lambda: "Kata sandi" in src.error, 3)
+        time.sleep(1.0)
+        assert len(probes) == 1 and opens == [] and "xyzzy" not in src.error
+        src.reopen()                                                  # guru memperbaiki sandi lalu menyimpan
+        assert wait_for(lambda: len(probes) == 2, 3)
+    finally:
+        src.stop()
+
+
+def test_unreadable_password_is_not_tried(monkeypatch):                # Final #4
+    opens = []
+    monkeypatch.setattr(source_module, "open_stream", lambda url: opens.append(url) or _NetCapture())
+    src = VideoSource("ipcam:k1", retry_s=0.1, resolve=lambda s: Stream("", None, "Kata sandi perlu diisi ulang."))
+    src.start()
+    try:
+        assert wait_for(lambda: src.error == "Kata sandi perlu diisi ulang.", 3)
+        time.sleep(0.5)
+        assert opens == []
+    finally:
+        src.stop()
+
+
+def test_reopen_bumps_version_and_reconnects(monkeypatch):            # Final #3
+    opens = []
+    monkeypatch.setattr(source_module, "open_stream", lambda url: opens.append(url) or _NetCapture(good=10 ** 6))
+    src = VideoSource("http://cam/video", retry_s=0.1)
+    src.start()
+    try:
+        assert wait_for(lambda: src.read() is not None, 3)
+        version = src.version
+        src.reopen()
+        assert src.version == version + 1
+        assert wait_for(lambda: len(opens) == 2, 3)
+    finally:
+        src.stop()
+
+
+def test_capture_card_asks_full_hd_but_webcam_stays_640(monkeypatch):  # Final #8
+    sizes = {}
+
+    class Cap:
+        def __init__(self, index, backend):
+            self.index = index
+
+        def isOpened(self):
+            return True
+
+        def set(self, prop, value):
+            sizes.setdefault(self.index, {})[prop] = value
+
+        def read(self):
+            time.sleep(0.02)
+            return True, np.zeros((10, 10, 3), np.uint8)
+
+        def release(self):
+            pass
+    monkeypatch.setattr(source_module.cv2, "VideoCapture", Cap)
+    monkeypatch.setattr(source_module, "camera_routes", lambda spec: [(1, 700)] if spec == "camera:dvr" else [(0, 700)])
+    card = VideoSource("ipcam:k1", resolve=lambda s: Stream("camera:dvr", (2, 0)))
+    assert card._open_source("ipcam:k1")[0] is not None
+    webcam = VideoSource("camera:usb")
+    assert webcam._open() is not None
+    assert sizes[1][cv2.CAP_PROP_FRAME_WIDTH] == 1920 and sizes[1][cv2.CAP_PROP_FRAME_HEIGHT] == 1080
+    assert sizes[0][cv2.CAP_PROP_FRAME_WIDTH] == 640

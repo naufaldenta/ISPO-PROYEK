@@ -11,7 +11,13 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import DATA_DIR, MODELS_DIR, SETTINGS_PATH, WORDS_PATH, Config, load
 from .engine import SLOW_TEXT, Engine
+from .cctv_uji import uji_sambungan
 from .jaringan import COOKIE, allow_firewall, firewall_status, is_local, qr_png
+from .kamera import IPCAM_PREFIX, default_store
+from .merek import MEREK
+from .onvif import OnvifError
+from .onvif import discover as onvif_discover
+from .onvif import stream_uri as onvif_stream_uri
 from .listener import STATUS_LABEL, Listener
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -24,6 +30,16 @@ NO_CACHE = {"Cache-Control": "no-store"}
 MARK_LABELS = ("jatuh", "kekerasan", "biasa")      # tanda adegan saat merekam uji
 MAX_VIDEO_BYTES = 4 * 1024 ** 3                    # video cadangan yang diunggah dari layar
 _BAD_NAME_CHARS = set(r'<>:"/\|?*')
+# Nama host yang sah untuk permintaan dari laptop sendiri. Situs lain yang terbuka di browser laptop bisa memakai
+# DNS rebinding (nama situsnya menunjuk ke 127.0.0.1); Host-nya tetap nama situs itu, jadi ditolak.
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
+
+
+def _host_name(host_header: str) -> str:
+    host = (host_header or "").strip().lower()
+    if host.startswith("["):
+        return host[1:host.find("]")] if "]" in host else host
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
 class _FreshStaticFiles(StaticFiles):
@@ -119,7 +135,7 @@ def _list_riwayat(riwayat) -> list[dict]:
 
 def _local_only(method: str, path: str) -> bool:
     """Pengaturan yang hanya boleh diubah dari laptop SAHABAT sendiri, bukan dari HP atau laptop lain."""
-    if path.startswith("/api/jaringan"):
+    if path.startswith("/api/jaringan") or path.startswith("/api/kamera"):
         return True
     return (method, path) in {
         ("GET", "/api/perangkat"), ("POST", "/api/perangkat"), ("POST", "/api/video"), ("POST", "/api/video/folder"),
@@ -147,10 +163,11 @@ def _login_page(message: str = "") -> str:
             '<button type="submit">Buka layar</button></form></body></html>')
 
 
-def create_app(engine, listener=None, inputs=None, lan=None) -> FastAPI:
+def create_app(engine, listener=None, inputs=None, lan=None, kamera=None) -> FastAPI:
+    kamera = kamera if kamera is not None else default_store()      # daftar kamera CCTV (data/kamera.json)
     if inputs is None and getattr(engine, "source", None) is not None:
         from .input_control import InputDevices
-        inputs = InputDevices(engine, listener)
+        inputs = InputDevices(engine, listener, kamera=kamera)
     app = FastAPI(title="SAHABAT Sekolah", docs_url=None, redoc_url=None, openapi_url=None)
     app.mount("/static", _FreshStaticFiles(directory=WEB_DIR), name="static")
 
@@ -162,6 +179,12 @@ def create_app(engine, listener=None, inputs=None, lan=None) -> FastAPI:
         """Laptop SAHABAT sendiri bebas. Perangkat lain butuh jaringan lokal hidup dan kode akses yang benar."""
         host = request.client.host if request.client else None
         if is_local(host):
+            if _host_name(request.headers.get("host", "")) not in LOCAL_HOSTS:
+                return Response("Alamat tidak dikenal.", status_code=403, media_type="text/plain; charset=utf-8")
+            # POST kamera hanya JSON: form atau text/plain dari situs lain tidak memicu pemeriksaan CORS browser
+            if (request.method == "POST" and request.url.path.startswith("/api/kamera")
+                    and not request.headers.get("content-type", "").lower().startswith("application/json")):
+                return JSONResponse({"ok": False, "error": "Kirim sebagai JSON."}, status_code=415)
             return await call_next(request)
         if lan is None or not lan.enabled:
             return Response("Akses dari jaringan lokal sedang dimatikan.", status_code=403,
@@ -442,6 +465,75 @@ def create_app(engine, listener=None, inputs=None, lan=None) -> FastAPI:
             pass                                            # tetap berlaku untuk sesi ini
         return {"ok": True, "on": on}
 
+    # ---- kamera CCTV (hanya dari laptop SAHABAT; kata sandi tidak pernah dikirim balik) ----
+    async def _body(request: Request) -> dict:
+        try:
+            body = await request.json()
+        except ValueError:
+            raise ValueError("Isian tidak valid.") from None
+        if not isinstance(body, dict):
+            raise ValueError("Isian tidak valid.")
+        return body
+
+    def _bad(exc: Exception, status: int = 400) -> JSONResponse:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=status)
+
+    @app.get("/api/kamera")
+    async def kamera_list():
+        brands = [{"id": key, "nama": info["nama"], "port": info["port"], "channel": info["channel"]}
+                  for key, info in MEREK.items()]
+        return {"ok": True, "kamera": await run_in_threadpool(kamera.list_public), "merek": brands}
+
+    @app.post("/api/kamera")
+    async def kamera_save(request: Request):
+        try:
+            item = await run_in_threadpool(kamera.save, await _body(request))
+        except ValueError as exc:
+            return _bad(exc)
+        except OSError as exc:
+            return _bad(OSError("Daftar kamera tidak bisa disimpan: " + str(exc)), 503)
+        source = getattr(engine, "source", None)
+        if getattr(source, "spec", None) == IPCAM_PREFIX + item["id"] and hasattr(source, "reopen"):
+            source.reopen()                 # kamera yang sedang dipakai langsung memakai alamat/sandi baru
+        return {"ok": True, "kamera": item}
+
+    @app.delete("/api/kamera/{cam_id}")
+    async def kamera_delete(cam_id: str):
+        source = getattr(engine, "source", None)
+        if getattr(source, "spec", None) == IPCAM_PREFIX + cam_id:
+            return _bad(ValueError("Kamera ini sedang dipakai. Pilih kamera lain dulu di Perangkat."), 409)
+        if not await run_in_threadpool(kamera.delete, cam_id):
+            return _bad(ValueError("Kamera tidak ditemukan."), 404)
+        return {"ok": True}
+
+    @app.post("/api/kamera/uji")
+    async def kamera_test(request: Request):
+        try:
+            stream = kamera.form_stream(await _body(request))
+        except ValueError as exc:
+            return _bad(exc)
+        return await run_in_threadpool(uji_sambungan, stream)
+
+    @app.post("/api/kamera/cari")
+    async def kamera_search():
+        return {"ok": True, "ditemukan": await run_in_threadpool(onvif_discover)}
+
+    @app.post("/api/kamera/onvif")
+    async def kamera_onvif(request: Request):
+        try:
+            body = await _body(request)
+            xaddr = body.get("xaddr")
+            if not isinstance(xaddr, str) or not xaddr.lower().startswith(("http://", "https://")):
+                raise ValueError("Alamat ONVIF kamera tidak valid.")
+            user, password = body.get("pengguna") or "", body.get("sandi") or ""
+            if not isinstance(user, str) or not isinstance(password, str):
+                raise ValueError("Nama pengguna atau kata sandi tidak valid.")
+            uri = await run_in_threadpool(onvif_stream_uri, xaddr, user, password,
+                                          substream=bool(body.get("substream", True)))
+        except (ValueError, OnvifError) as exc:
+            return _bad(exc)
+        return {"ok": True, "alamat": uri}
+
     @app.get("/api/perangkat")
     async def devices():
         if inputs is None:
@@ -474,7 +566,7 @@ def build_engine(cfg: Config, source=None, record: bool = False) -> Engine:
     from .source import VideoSource
 
     if source is None:
-        source = VideoSource(cfg.camera, flip=cfg.camera_flip)
+        source = VideoSource(cfg.camera, flip=cfg.camera_flip, resolve=default_store().resolve)
         source.start()
     pose = YoloPose(cfg.imgsz or cfg.imgsz_candidates[-1])
     from .riwayat import Riwayat

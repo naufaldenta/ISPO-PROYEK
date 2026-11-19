@@ -14,13 +14,19 @@
     $("microphone-select").disabled = value || !catalog || !catalog.microphone_available;
   }
 
-  function fill(select, entries, selected, automatic, videos = []) {
+  function fill(select, entries, selected, automatic, videos = [], ipcams = []) {
     select.replaceChildren();
     const options = [{ id: null, name: automatic }, ...entries];
-    if (![...options, ...videos].some((item) => item.id === selected)) {
+    if (![...options, ...videos, ...ipcams].some((item) => item.id === selected)) {
       options.push({ id: selected, name: "Pilihan tersimpan (tidak terdeteksi)" });
     }
     options.forEach((item) => select.add(new Option(item.name, JSON.stringify(item.id))));
+    if (ipcams.length) {
+      const group = document.createElement("optgroup");
+      group.label = "Kamera CCTV (atur di panel Kamera)";
+      ipcams.forEach((item) => group.append(new Option("CCTV: " + item.name, JSON.stringify(item.id))));
+      select.append(group);
+    }
     if (videos.length) {
       const group = document.createElement("optgroup");
       group.label = "Video dari folder video (diputar berulang)";
@@ -36,6 +42,9 @@
     if (state.camera_is_video) {
       $("camera-status").textContent = "Video " + state.camera.slice("video:".length) + ": " + (state.camera_connected
         ? "diputar berulang" : (state.camera_error || "membuka video…"));
+    } else if (state.camera_is_cctv) {
+      $("camera-status").textContent = "CCTV " + (state.camera_name || "(tidak ada di daftar)") + ": " +
+        (state.camera_connected ? "tersambung" : (state.camera_error || "menghubungkan…"));
     } else {
       const name = camera ? camera.name : (state.camera === null ? "Otomatis" : "Pilihan tersimpan");
       $("camera-status").textContent = "Kamera " + name + ": " + (state.camera_connected
@@ -57,7 +66,7 @@
       if (!response.ok) throw new Error(result.error || "Daftar perangkat belum tersedia.");
       catalog = result;
       fill($("camera-select"), result.cameras, previous ? previous.camera : result.camera, "Otomatis — kamera pertama tersedia",
-           result.videos || []);
+           result.videos || [], result.ipcams || []);
       fill($("microphone-select"), result.microphones, previous ? previous.microphone : result.microphone, "Otomatis — mikrofon bawaan Windows");
       status(result);
       const videoCount = (result.videos || []).length;

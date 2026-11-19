@@ -151,7 +151,45 @@ button:focus-visible { outline: 0.5vh solid #ffd43b; outline-offset: 0.3vh; }
 [hidden] { display: none !important; }
 
 #flip { font-size: 2.2vh; padding: 0.6vh 1.4vw; border-radius: 999px; background: rgba(20, 20, 22, 0.78); color: #fff; }
-#devices, #start-devices { font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+#devices, #start-devices, #kamera { font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+
+/* ---- Panel Kamera CCTV ---- */
+#kamera-dialog {
+  width: min(760px, 95vw); max-height: 90vh; overflow-y: auto; box-sizing: border-box;
+  border: 1px solid #536174; border-radius: 16px; padding: 20px 24px;
+  background: #17212e; color: #fff; box-shadow: 0 20px 70px #0009; font-size: 16px;
+}
+#kamera-dialog::backdrop { background: #000b; }
+#kamera-dialog h3 { margin: 18px 0 8px; font-size: 18px; }
+#kamera-dialog p { line-height: 1.5; color: #ccd5df; }
+#kamera-dialog button { font-size: 15px; padding: 10px 16px; border-radius: 8px; background: #303944; color: #fff; }
+#kamera-dialog button:disabled, #kamera-dialog input:disabled, #kamera-dialog select:disabled { opacity: 0.55; }
+#kamera-dialog label { display: block; font-weight: 700; margin: 10px 0 4px; flex: 1 1 140px; min-width: 0; }
+#kamera-dialog input:not([type="checkbox"]), #kamera-dialog select {
+  display: block; width: 100%; box-sizing: border-box; font: inherit; font-weight: 400; margin-top: 4px;
+  padding: 10px; background: #fff; color: #17212e; border: 1px solid #a9b5c4; border-radius: 8px;
+}
+#kamera-dialog .kamera-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+#kamera-dialog .device-hint { font-size: 13px; }
+.kamera-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.kamera-modes { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+#kamera-dialog .kamera-modes button.active { background: var(--green); }
+#kamera-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.kamera-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 10px; background: #223042;
+}
+.kamera-item > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kamera-where { font-size: 13px; color: #b7c7da; overflow-wrap: anywhere; }
+.kamera-warn { font-size: 13px; color: #ffd43b; }
+.kamera-empty { color: #b7c7da; }
+.kamera-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#kamera-found { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+#kamera-dialog .kamera-found-item { text-align: left; overflow-wrap: anywhere; }
+.kamera-test { margin: 12px 0; }
+#kamera-preview { max-width: 100%; border-radius: 8px; display: block; }
+#kamera-test-msg, #kamera-message { min-height: 22px; font-size: 14px; overflow-wrap: anywhere; }
+#kamera-save { background: var(--green) !important; }
 #device-dialog {
   width: min(560px, 92vw); max-height: 88vh; overflow-y: auto;
   border: 1px solid #536174; border-radius: 16px; padding: 24px;
@@ -252,7 +290,7 @@ button:focus-visible { outline: 0.5vh solid #ffd43b; outline-offset: 0.3vh; }
 #lan { font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
 #lan[data-on="1"] { background: var(--green); }
 #remote-chip { font-size: 2.2vh; padding: 0.6vh 1.4vw; border-radius: 999px; background: #1d4ed8; color: #fff; }
-body.remote #devices, body.remote #zone, body.remote #flip, body.remote #lan, body.remote #start-devices,
+body.remote #devices, body.remote #kamera, body.remote #zone, body.remote #flip, body.remote #lan, body.remote #start-devices,
 body.remote #clips-toggle { display: none !important; }
 body.remote #words { cursor: default; }
 #lan-dialog {

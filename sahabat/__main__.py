@@ -141,7 +141,8 @@ def main() -> int:
     from .server import build_engine, build_listener, create_app
     from .source import VideoSource
 
-    source = VideoSource(cfg.camera, flip=cfg.camera_flip)
+    from .kamera import default_store
+    source = VideoSource(cfg.camera, flip=cfg.camera_flip, resolve=default_store().resolve)
     source.start()
     frame = _first_frame(source)
     if cfg.imgsz is None or cfg.tuned_for is None:

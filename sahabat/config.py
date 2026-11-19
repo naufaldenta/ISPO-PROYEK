@@ -20,6 +20,7 @@ MODELS_DIR = APP_DIR / "models"
 SETTINGS_PATH = DATA_DIR / "pengaturan.json"
 WORDS_PATH = APP_DIR / "kata-kasar.txt"       # daftar kata kasar; disunting sekolah
 VIDEO_DIR = APP_DIR / "video"                 # video cadangan pengganti kamera (dipilih dari layar)
+KAMERA_PATH = DATA_DIR / "kamera.json"            # daftar kamera CCTV (kata sandi terenkripsi)
 VIDEO_EXTENSIONS = (".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".m4v")
 _SETTINGS_LOCK = threading.RLock()
 
