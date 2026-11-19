@@ -485,3 +485,24 @@ def test_pause_stops_steps_without_closing_and_resume_continues():
     assert CountingPose.calls > paused_at
     e.stop()
     assert r.closed
+
+
+class OverlayRiwayat(FakeRiwayat):
+    accepts_overlay = True
+
+    def frame(self, t, jpeg, kamera="", overlay=None):
+        self.frames.append((t, jpeg, overlay))
+
+
+def test_engine_sends_raw_frames_with_overlay_data():
+    import cv2
+    r = OverlayRiwayat()
+    run(Engine(Config(), None, FakePose(fall_script), riwayat=r), seconds=6.0)
+    assert r.frames and all(set(ov) >= {"orang", "skor", "ukuran"} for _, _, ov in r.frames)
+    assert any(ov["skor"]["jatuh"] for _, _, ov in r.frames)
+    assert any(p["warna"] == "red" for _, _, ov in r.frames for p in ov["orang"])
+    _, jpeg, ov = r.frames[-1]
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert ov["ukuran"] == [img.shape[1], img.shape[0]]
+    green = (img[:, :, 1] > 150) & (img[:, :, 0] < 100) & (img[:, :, 2] < 100)
+    assert not green.any()                                       # frame asli: tidak ada garis kerangka

@@ -201,7 +201,7 @@ class Engine:
         if self.recorder is not None:
             self.recorder.write(t, frame)
         if self.riwayat is not None:
-            self._feed_riwayat(t, frame, snap.overlays, events)
+            self._feed_riwayat(t, frame, snap.overlays, events, (fall_ids, pairs))
         if self.log is not None:
             self.log.write({
                 "t": round(t, 3),
@@ -231,16 +231,26 @@ class Engine:
                 out.add(i)
         return out
 
-    def _feed_riwayat(self, t, frame, overlays, events) -> None:
-        """Frame layar (berkerangka) untuk klip bukti, lalu kejadian baru. Gagal di sini tidak menghentikan alarm."""
+    def _feed_riwayat(self, t, frame, overlays, events, scores=((), ())) -> None:
+        """Frame untuk klip bukti, lalu kejadian baru. Gagal di sini tidak menghentikan alarm.
+
+        Riwayat yang menerima overlay mendapat frame asli (JPEG q85) + data kerangka dan skor penilai, supaya klip bisa
+        diinspeksi (kerangka disembunyikan, orang disorot). Riwayat lain mendapat frame layar berkerangka seperti dulu.
+        """
         try:
             if self.riwayat.wants_frames:
-                jpeg = annotated_jpeg(frame, overlays, quality=70, zone=self.zone)
+                if getattr(self.riwayat, "accepts_overlay", False):
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    jpeg = buf.tobytes() if ok else None
+                    extra = {"overlay": _overlay_data(frame, overlays, scores, self.zone)}
+                else:
+                    jpeg = annotated_jpeg(frame, overlays, quality=70, zone=self.zone)
+                    extra = {}
                 if jpeg is not None:
                     if self.kamera[0]:
-                        self.riwayat.frame(t, jpeg, kamera=self.kamera[0])
-                    else:                                      # Mode Pameran: panggilan lama
-                        self.riwayat.frame(t, jpeg)
+                        self.riwayat.frame(t, jpeg, kamera=self.kamera[0], **extra)
+                    else:                                      # Mode Pameran
+                        self.riwayat.frame(t, jpeg, **extra)
         except Exception:
             self._report("klip bukti")
         try:
@@ -364,6 +374,17 @@ class Engine:
             return annotated_jpeg(np.full((480, 640, 3), 40, dtype=np.uint8), (), quality, width=width)
         overlays = snap.overlays if self.source is None or self.source.version == self._input_version else ()
         return annotated_jpeg(frame, overlays, quality, zone=self.zone, width=width)
+
+
+def _overlay_data(frame: np.ndarray, overlays, scores, zone) -> dict:
+    """Data kerangka satu frame untuk klip versi 2 (titik dibulatkan supaya overlay.json kecil)."""
+    fall_ids, pairs = scores
+    people = [{"id": int(ov.track_id), "kp": np.round(np.asarray(ov.kp, dtype=float), 1).tolist(),
+               "conf": np.round(np.asarray(ov.conf, dtype=float), 2).tolist(), "warna": ov.color, "label": ov.label}
+              for ov in overlays]
+    violence = max((float(p.prob) for p in pairs), default=0.0)
+    return {"orang": people, "skor": {"jatuh": bool(len(fall_ids)), "kekerasan": round(violence, 3)},
+            "ukuran": [int(frame.shape[1]), int(frame.shape[0])], "zona": [list(p) for p in zone] if zone else None}
 
 
 def annotated_jpeg(frame: np.ndarray, overlays, quality: int = 75, zone=None, width: int | None = None) -> bytes | None:

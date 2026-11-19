@@ -131,6 +131,65 @@ class StubCctv:
         return cv2.imencode(".jpg", canvas)[1].tobytes()
 
 
+def _figure(cx: float, top: float, h: float, lean: float = 0.0) -> list[list[float]]:
+    """17 titik tubuh COCO sederhana untuk klip tiruan."""
+    def at(dx, dy):
+        return [round(cx + dx * h + lean * dy * h, 1), round(top + dy * h, 1)]
+    return [at(0, 0.05), at(-0.03, 0.03), at(0.03, 0.03), at(-0.06, 0.05), at(0.06, 0.05),
+            at(-0.12, 0.2), at(0.12, 0.2), at(-0.16, 0.38), at(0.16, 0.38), at(-0.18, 0.55), at(0.18, 0.55),
+            at(-0.08, 0.55), at(0.08, 0.55), at(-0.09, 0.77), at(0.09, 0.77), at(-0.1, 1.0), at(0.1, 1.0)]
+
+
+def demo_riwayat(folder):
+    """Riwayat tiruan: klip versi 2 (dua orang, kejadian di tengah), klip versi 1, dan kejadian kamera lain."""
+    import time
+
+    from sahabat.riwayat import Riwayat
+    clock = {"now": time.time() - 600}
+    r = Riwayat(folder, background=False, clock=lambda: clock["now"], before_s=3.0, after_s=2.0)
+    bg = np.zeros((360, 640, 3), np.uint8)
+    bg[:] = (52, 60, 70)
+    cv2.rectangle(bg, (0, 280), (640, 360), (70, 82, 60), -1)
+
+    def frame(i, kamera, overlay):
+        img = bg.copy()
+        cv2.putText(img, f"klip tiruan {i}", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+        for person in (overlay or {}).get("orang", []):
+            for x, y in person["kp"]:
+                cv2.circle(img, (int(x), int(y)), 9, (120, 120, 160), -1)
+        jpg = cv2.imencode(".jpg", img)[1].tobytes()
+        r.frame(i * 0.1, jpg, kamera=kamera, overlay=overlay)
+
+    for i in range(60):                                          # Kelas 7B: dorongan di frame 30
+        lean = 0.0 if i < 28 else min(0.6, (i - 28) * 0.08)
+        red = 28 <= i <= 45
+        ov = {"orang": [
+            {"id": 3, "kp": _figure(260 + i, 80, 200), "conf": [0.95] * 17, "warna": "red" if red else "green",
+             "label": "#3"},
+            {"id": 5, "kp": _figure(380, 80, 200, lean), "conf": [0.95] * 17, "warna": "red" if red else "green",
+             "label": "#5"},
+            {"id": 8, "kp": _figure(560, 150, 120), "conf": [0.9] * 17, "warna": "out", "label": ""}],
+            "skor": {"jatuh": False, "kekerasan": 0.92 if 26 <= i <= 34 else 0.2}, "ukuran": [640, 360],
+            "zona": [[0.05, 0.05], [0.8, 0.05], [0.8, 0.95], [0.05, 0.95]]}
+        frame(i, "k2", ov)
+        if i == 30:
+            clock["now"] += 0.0
+            r.event(i * 0.1, "kekerasan", "full", [3, 5], kamera="k2", kamera_nama="Kelas 7B")
+    clock["now"] += 2.0
+    for i in range(60, 120):                                    # Lorong A, 2 dtk kemudian: kamera lain pada saat itu
+        ov = {"orang": [{"id": 1, "kp": _figure(300, 90, 180), "conf": [0.9] * 17, "warna": "green", "label": "#1"}],
+              "skor": {"jatuh": False, "kekerasan": 0.0}, "ukuran": [640, 360], "zona": None}
+        frame(i, "k1", ov)
+        if i == 90:
+            r.event(i * 0.1, "jatuh", "full", [1], kamera="k1", kamera_nama="Lorong A")
+    clock["now"] -= 400
+    for i in range(120, 180):                                   # klip lama versi 1 (tanpa overlay)
+        frame(i, "", None)
+        if i == 150:
+            r.event(i * 0.1, "jatuh", "full", [2])
+    return r
+
+
 def app():
     engine = StubEngine()
     engine.pause = engine.resume = lambda: None
@@ -144,6 +203,7 @@ def app():
     from sahabat.kamera import KameraStore
     import json
     folder = Path(tempfile.mkdtemp(prefix="sahabat-stub-"))                                # bukan data/ sungguhan
+    engine.riwayat = demo_riwayat(folder / "riwayat")
     (folder / "kamera.json").write_text(json.dumps({"kamera": [
         {"id": i, "nama": n, "jenis": "alamat", "alamat": f"rtsp://192.168.1.{60 + j}:554/stream2", "pengguna": "",
          "sandi": "", "aktif": True, "prioritas": i == "k1", "zona": None, "potong": None}

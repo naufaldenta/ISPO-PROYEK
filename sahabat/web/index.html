@@ -88,11 +88,57 @@
       <div class="history-list-wrap">
         <ul id="history-list"></ul>
         <p id="history-empty" hidden>Belum ada kejadian tercatat.</p>
+        <p id="history-summary"></p>
       </div>
       <div class="history-view">
-        <img id="history-player" alt="Klip bukti kejadian">
+        <p class="insp-note">SAHABAT membantu melihat ulang. Keputusan tetap di tangan guru.</p>
         <p id="history-caption">Pilih kejadian untuk memutar klip buktinya.</p>
-        <button id="history-replay" type="button" hidden>Putar ulang</button>
+        <div id="insp" hidden>
+          <div class="insp-stage"><canvas id="insp-canvas" aria-label="Klip bukti kejadian"></canvas></div>
+          <p id="insp-msg" role="status" aria-live="polite"></p>
+          <div class="insp-row">
+            <button id="insp-start" type="button" title="Ke awal (Home)">⏮</button>
+            <button id="insp-prev" type="button" title="Mundur satu frame (←)">◀</button>
+            <button id="insp-play" type="button" title="Putar / jeda (spasi)">▶ Putar</button>
+            <button id="insp-next" type="button" title="Maju satu frame (→)">▶|</button>
+            <label>Kecepatan
+              <select id="insp-speed">
+                <option value="0.25">0,25×</option>
+                <option value="0.5">0,5×</option>
+                <option value="1" selected>1×</option>
+              </select>
+            </label>
+            <button id="insp-reset" type="button" title="Gulir atau cubit untuk memperbesar; seret untuk menggeser">Ukuran asli</button>
+            <span id="insp-time"></span>
+          </div>
+          <div class="insp-timeline">
+            <input id="insp-pos" type="range" min="0" max="0" value="0" aria-label="Garis waktu klip">
+            <div id="insp-marks" aria-hidden="true"></div>
+          </div>
+          <div class="insp-row">
+            <label class="insp-check"><input id="insp-skeleton" type="checkbox" checked> Kerangka</label>
+            <label class="insp-check"><input id="insp-highlight" type="checkbox" checked> Sorot orang terlibat</label>
+            <span id="insp-involved"></span>
+            <span id="insp-v1" hidden>Klip lama: kerangka sudah tergambar</span>
+          </div>
+          <div class="insp-row" id="insp-lain-wrap" hidden>
+            <span>Kamera lain pada saat itu:</span><span id="insp-lain"></span>
+          </div>
+          <div class="insp-row insp-laptop">
+            <button id="insp-snap" type="button">Simpan gambar</button>
+            <button id="insp-mp4" type="button">Unduh MP4</button>
+          </div>
+          <div class="insp-row insp-laptop insp-tindak">
+            <span>Tindak lanjut:</span>
+            <button type="button" data-tanda="benar">Kejadian benar</button>
+            <button type="button" data-tanda="keliru">Alarm keliru</button>
+            <button type="button" data-tanda="tindak">Perlu tindak lanjut</button>
+          </div>
+          <div class="insp-row insp-laptop insp-tindak">
+            <textarea id="insp-catatan" maxlength="300" rows="2" placeholder="Catatan singkat (opsional), paling banyak 300 huruf"></textarea>
+            <button id="insp-catatan-save" type="button">Simpan catatan</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="history-foot">
@@ -246,6 +292,8 @@
 
   <script src="/static/app.js"></script>
   <script src="/static/devices.js"></script>
+  <script src="/static/inspeksi-hitung.js"></script>
+  <script src="/static/inspeksi.js"></script>
   <script src="/static/history.js"></script>
   <script src="/static/zone.js"></script>
   <script src="/static/lan.js"></script>

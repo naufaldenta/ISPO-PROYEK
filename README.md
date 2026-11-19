@@ -82,7 +82,7 @@ Tanpa Git, unduh lewat tombol **Code → Download ZIP**, ekstrak, lalu klik dua 
 | **Senyap** | Mematikan bunyi alarm |
 | **Perangkat** | Memilih kamera, mikrofon, video cadangan, dan volume alarm (ada tombol **Coba bunyi**) |
 | **Kamera** | Menambah kamera CCTV (IP camera, channel DVR/NVR, HP, webcam, capture card, video simulasi) dan menyalakan **Mode CCTV** |
-| **Riwayat** | Daftar kejadian beserta klip buktinya; angka merah = kejadian baru yang belum dilihat |
+| **Riwayat** | Daftar kejadian dan pemutar inspeksi klip bukti; angka merah = kejadian baru yang belum dilihat |
 | **Zona** | Menggambar area yang dipantau; orang yang titik tengah badannya di luar zona tidak dinilai |
 | **HP / laptop lain** | Membuka layar ini dari HP atau laptop lain di WiFi yang sama (kode QR + kode akses) |
 | **Kata kasar** atau tombol **M** | Menghidupkan / mematikan peringatan kata kasar |
@@ -150,6 +150,22 @@ pemasangan sungguhan dengan lebih dari 2 kamera, pakai komputer dengan kartu gra
 Layar HP / laptop lain (jaringan lokal) menampilkan grid yang sama dengan gambar kecil 5 fps supaya WiFi tidak berat.
 Menyalakan Mode CCTV, mengubah kamera, dan menggambar zona tetap hanya dari laptop SAHABAT. Mode CCTV yang dinyalakan
 diingat dan menyala lagi saat SAHABAT dimulai ulang.
+
+**Melihat ulang kejadian (inspeksi).** Tekan **Riwayat**, lalu pilih kejadian. Klip bukti diputar di pemutar inspeksi:
+
+- **Gerak lambat** 0,25×, 0,5×, 1×; **jeda** dan **maju/mundur satu frame** (tombol atau ← / →, spasi = putar/jeda).
+- **Garis waktu**: penanda merah = detik kejadian, penanda jingga = saat penilai di atas ambang. Klik untuk melompat.
+- **Perbesar**: gulir atau cubit; seret untuk menggeser; **Ukuran asli** untuk kembali.
+- **Kerangka** bisa disembunyikan untuk melihat gambar asli, dan **Sorot orang terlibat** meredupkan orang lain.
+- **Kamera lain pada saat itu** (Mode CCTV): membuka klip kamera lain pada detik yang sama.
+- **Simpan gambar** (PNG) dan **Unduh MP4**, lengkap dengan nama kamera dan jam, untuk laporan ke wali kelas atau
+  kepala sekolah.
+- **Tindak lanjut**: tandai **Kejadian benar**, **Alarm keliru**, atau **Perlu tindak lanjut**, dan tulis catatan
+  singkat. Ringkasannya tampil di bawah daftar kejadian dan berguna untuk menghitung alarm keliru di pemakaian nyata.
+
+SAHABAT membantu melihat ulang; keputusan tetap di tangan guru. Dari HP / laptop lain, klip bisa diputar, diperlambat,
+dan diperbesar, tetapi simpan gambar, unduh MP4, dan tanda tindak lanjut hanya dari laptop SAHABAT. Klip lama (sebelum
+fitur ini) tetap bisa diputar; kerangkanya sudah tergambar sehingga tidak bisa disembunyikan.
 
 **Video cadangan.** Bila kamera bermasalah saat demo, buka **Perangkat**, tekan **Tambah video…** (atau salin video
 ke folder `video/` lalu **Cari ulang**), pilih videonya di daftar Kamera, lalu **Terapkan**. Video diputar berulang
@@ -292,8 +308,8 @@ runtime\python\python.exe -m latih.putar data\rekaman\<folder-rekaman> --set vio
 ## Privasi
 
 - Semua pemrosesan terjadi di laptop. Tidak ada gambar atau suara yang dikirim ke internet.
-- Video tidak direkam terus-menerus. Setiap kejadian menyimpan satu klip bukti pendek (5 detik sebelum sampai
-  3 detik sesudah, dengan kerangka tubuh) di `data/riwayat`, hanya di laptop itu sendiri, dan terhapus otomatis
+- Video tidak direkam terus-menerus. Setiap kejadian menyimpan satu klip bukti pendek (8 detik sebelum sampai
+  5 detik sesudah, gambar asli ditambah data kerangka tubuh) di `data/riwayat`, hanya di laptop itu sendiri, dan terhapus otomatis
   setelah 7 hari. Penyimpanan klip bisa dimatikan dari panel **Riwayat**; kejadian tetap dicatat tanpa video.
 - Log penilaian berupa angka disimpan di `data/log` dan dihapus otomatis setelah 14 hari.
 - Daftar kamera CCTV disimpan di `data/kamera.json` dengan kata sandi terenkripsi. Alamat yang tampil di layar

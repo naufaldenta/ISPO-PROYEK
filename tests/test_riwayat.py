@@ -1,3 +1,4 @@
+import pytest
 import json
 import zipfile
 
@@ -203,3 +204,67 @@ def test_turning_clips_off_clears_every_camera(tmp_path):
     rec = r.event(0.1, "jatuh", "full", [1], kamera="k1")
     r.frame(3.1, b"A2", kamera="k1")                 # akhir klip: 0,1 + 3 dtk
     assert [j for _, j in r.clip(rec.id)] == [b"A2"]
+
+
+# ---- Bagian 3: klip versi 2 ----
+def test_v2_clip_keeps_raw_frames_and_overlay(tmp_path):
+    r = make(tmp_path, before_s=1.0, after_s=0.5)
+    ov = {"orang": [{"id": 3, "kp": [[1.0, 2.0]] * 17, "conf": [0.9] * 17, "warna": "red", "label": "#3"}],
+          "skor": {"jatuh": False, "kekerasan": 0.91}, "ukuran": [640, 480], "zona": [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]}
+    rec = None
+    for i in range(20):
+        r.frame(i * 0.1, b"raw%d" % i, overlay=ov)
+        if i == 12:
+            rec = r.event(i * 0.1, "kekerasan", "full", [3, 5])
+    info = r.clip_info(rec.id)
+    assert info["versi"] == 2 and len(info["overlay"]) == len(info["waktu"])
+    assert info["overlay"][0]["skor"]["kekerasan"] == 0.91
+    assert info["meta"]["orang"] == [3, 5] and info["meta"]["lebar"] == 640 and info["meta"]["tinggi"] == 480
+    assert info["meta"]["zona"] == [[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]
+    assert abs(info["meta"]["kejadian_t"] - 1.0) < 1e-6        # 1,2 dtk - mulai klip 0,2 dtk
+    assert r.clip(rec.id)[0][1] == b"raw2"                     # klip() lama tetap memberi (t, jpeg)
+
+
+def test_v1_clip_info_without_overlay(tmp_path):
+    r = make(tmp_path, before_s=0.2, after_s=0.2)
+    feed(r, 0.0, 0.5)
+    rec = r.event(0.5, "jatuh", "full", [1])
+    feed(r, 0.6, 1.0)
+    info = r.clip_info(rec.id)
+    assert info["versi"] == 1 and info["overlay"] is None and info["meta"] is None and len(info["waktu"]) > 3
+    assert r.clip_info("../x") is None and r.clip_info("20990101-000000-1") is None
+
+
+# ---- Bagian 3: tanda tindak lanjut guru ----
+def test_teacher_marks_and_notes_survive_restart(tmp_path):
+    clock = Clock()
+    r = make(tmp_path, clock=clock)
+    a = r.event(0.0, "jatuh", "full", [1])
+    b = r.event(0.0, "kekerasan", "full", [2, 3])
+    item = r.set_tindak(a.id, "keliru", "Siswa duduk di lantai, bukan jatuh. <script>x</script>")
+    assert item["tanda"] == "keliru" and item["catatan"].endswith("<script>x</script>")   # disimpan apa adanya
+    r.set_tindak(b.id, "tindak", None)
+    again = make(tmp_path, clock=clock)
+    assert {i["id"]: i["tanda"] for i in again.list()} == {a.id: "keliru", b.id: "tindak"}
+    assert again.ringkasan() == {"benar": 0, "keliru": 1, "tindak": 1, "belum": 0, "jatuh": 1, "kekerasan": 1}
+    again.set_tindak(a.id, "", None)
+    assert again.ringkasan()["belum"] == 1
+    assert [i for i in again.list() if i["id"] == a.id][0]["catatan"].startswith("Siswa")
+
+
+def test_bad_marks_are_rejected(tmp_path):
+    r = make(tmp_path)
+    a = r.event(0.0, "jatuh", "full", [1])
+    for bad in (("pelaku", None), ("benar", "x" * 301), (1, None), (None, 5)):
+        with pytest.raises(ValueError):
+            r.set_tindak(a.id, *bad)
+    assert r.set_tindak("20990101-000000-1", "benar", None) is None
+    assert r.set_tindak("../x", "benar", None) is None
+
+
+def test_summary_per_camera(tmp_path):
+    r = make(tmp_path)
+    a = r.event(0.0, "jatuh", "full", [1], kamera="k1")
+    r.event(0.0, "jatuh", "full", [1], kamera="k2")
+    r.set_tindak(a.id, "benar", None)
+    assert r.ringkasan(kamera="k1") == {"benar": 1, "keliru": 0, "tindak": 0, "belum": 0, "jatuh": 1, "kekerasan": 0}

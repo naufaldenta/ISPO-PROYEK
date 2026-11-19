@@ -79,7 +79,7 @@ def test_decoder_anti_repetition_can_be_switched_for_comparison():
 
 def test_clip_settings_defaults_and_choice_is_per_laptop(tmp_path):
     c = Config()
-    assert (c.clips_enabled, c.clip_before_s, c.clip_after_s, c.clip_keep_days) == (True, 5.0, 3.0, 7.0)
+    assert (c.clips_enabled, c.clip_before_s, c.clip_after_s, c.clip_keep_days) == (True, 8.0, 5.0, 7.0)
     p = tmp_path / "p.json"
     save(Config(clips_enabled=False), p)
     assert load(p).clips_enabled is False

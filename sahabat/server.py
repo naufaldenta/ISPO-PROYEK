@@ -89,6 +89,30 @@ def _video_gap(local: bool, small: bool) -> float:
     return VIDEO_GAP_S if local else REMOTE_VIDEO_GAP_S
 
 
+CLIP_MISSING = "Klip tidak ada atau sudah terhapus."
+CLIP_SAVING = "Klip sedang disimpan, coba lagi sebentar lagi."
+
+
+def _safe_file_part(name: str) -> str:
+    """Bagian nama berkas yang aman untuk header unduhan: hanya huruf Latin, angka, dan tanda hubung."""
+    cleaned = "".join(c if (c.isascii() and c.isalnum()) or c == "-" else "-" for c in name or "")[:40]
+    return cleaned or "Kamera"
+
+
+def _other_cameras(riwayat, item: dict) -> list[dict]:
+    """Kejadian dari kamera lain yang klipnya ada dan terjadi dalam rentang klip ini (sebelum + sesudah)."""
+    span = riwayat.before_s + riwayat.after_s
+    out = []
+    for other in riwayat.list(limit=10 ** 6):
+        if other["id"] == item["id"] or other.get("kamera", "") == item.get("kamera", "") or not other["klip"]:
+            continue
+        diff = other["waktu"] - item["waktu"]
+        if abs(diff) <= span:
+            out.append({"id": other["id"], "kamera_nama": other.get("kamera_nama", ""), "jenis": other["jenis"],
+                        "selisih_s": round(diff, 3)})
+    return sorted(out, key=lambda x: abs(x["selisih_s"]))
+
+
 def remember_cctv(on: bool) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, cctv_enabled=bool(on))
@@ -161,6 +185,9 @@ def _local_only(method: str, path: str) -> bool:
         return True
     if method == "POST" and path == "/api/cctv":
         return True
+    if path.startswith("/api/riwayat/") and ((method == "POST" and path.endswith("/tindak"))
+                                             or (method == "GET" and path.endswith("/unduh"))):
+        return True                         # tanda guru dan unduhan klip hanya dari laptop SAHABAT
     return (method, path) in {
         ("GET", "/api/perangkat"), ("POST", "/api/perangkat"), ("POST", "/api/video"), ("POST", "/api/video/folder"),
         ("POST", "/api/zona"), ("POST", "/api/riwayat/klip"), ("POST", "/api/cermin"), ("POST", "/api/kata"),
@@ -456,8 +483,83 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         if riwayat is None or riwayat.disabled:
             return {"ok": False, "kejadian": [], "simpan_klip": False, "hari": 0}
         items = await run_in_threadpool(_list_riwayat, riwayat, kamera)
-        return {"ok": True, "kejadian": items, "simpan_klip": bool(riwayat.keep_clips),
+        summary = await run_in_threadpool(riwayat.ringkasan, kamera)
+        return {"ok": True, "kejadian": items, "ringkasan": summary, "simpan_klip": bool(riwayat.keep_clips),
                 "hari": riwayat.keep_days, "sebelum": riwayat.before_s, "sesudah": riwayat.after_s}
+
+    def clip_target(record_id: str):
+        """(riwayat, kejadian) atau JSONResponse 404/409 yang ramah."""
+        riwayat = getattr(engine, "riwayat", None)
+        item = riwayat.find(record_id) if riwayat is not None else None
+        if item is None:
+            return None, JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
+        if item.get("menyimpan"):
+            return None, JSONResponse({"ok": False, "error": CLIP_SAVING}, status_code=409)
+        return (riwayat, item), None
+
+    @app.get("/api/riwayat/{record_id}/info")
+    async def history_info(record_id: str):
+        target, error = await run_in_threadpool(clip_target, record_id)
+        if error is not None:
+            return error
+        riwayat, item = target
+        info = await run_in_threadpool(riwayat.clip_info, record_id)
+        if info is None:
+            return JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
+        from .types import SKELETON_EDGES
+        return {"ok": True, **info, "jumlah": len(info["waktu"]), "tulang": [list(e) for e in SKELETON_EDGES],
+                "kejadian": item, "lain": await run_in_threadpool(_other_cameras, riwayat, item)}
+
+    @app.get("/api/riwayat/{record_id}/frame/{n}")
+    async def history_frame(record_id: str, n: int):
+        riwayat = getattr(engine, "riwayat", None)
+        jpeg = await run_in_threadpool(riwayat.clip_frame, record_id, n) if riwayat is not None else None
+        if not jpeg:
+            return JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
+        return Response(jpeg, media_type="image/jpeg", headers=NO_CACHE)
+
+    @app.get("/api/riwayat/{record_id}/unduh")
+    async def history_download(record_id: str):
+        target, error = await run_in_threadpool(clip_target, record_id)
+        if error is not None:
+            return error
+        riwayat, item = target
+        frames = await run_in_threadpool(riwayat.clip, record_id)
+        info = await run_in_threadpool(riwayat.clip_info, record_id)
+        if not frames or info is None:
+            return JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
+        import time as _time
+        from . import klip_mp4
+        name = item.get("kamera_nama") or "Kamera"
+        stamp = _time.strftime("%d-%m-%Y %H.%M.%S", _time.localtime(item["waktu"]))
+        caption = f"{name} - {stamp} - SAHABAT Sekolah"
+        zone = (info.get("meta") or {}).get("zona")
+        try:
+            data = await run_in_threadpool(klip_mp4.render, frames, info["overlay"], zone, caption)
+        except Exception as exc:                        # termasuk MemoryError: jawab jelas, bukan galat 500
+            reason = str(exc) or type(exc).__name__
+            return JSONResponse({"ok": False, "error": "MP4 belum bisa dibuat: " + reason}, status_code=503)
+        filename = f"SAHABAT-{_safe_file_part(name)}-{record_id}.mp4"
+        return Response(data, media_type="video/mp4",
+                        headers={**NO_CACHE, "Content-Disposition": f'attachment; filename="{filename}"'})
+
+    @app.post("/api/riwayat/{record_id}/tindak")
+    async def history_mark(record_id: str, request: Request):
+        """Tanda tindak lanjut guru: {"tanda": "benar"|"keliru"|"tindak"|"", "catatan": str}."""
+        riwayat = getattr(engine, "riwayat", None)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if riwayat is None or not isinstance(body, dict):
+            return JSONResponse({"ok": False, "error": "Isian tidak valid."}, status_code=400)
+        try:
+            item = await run_in_threadpool(riwayat.set_tindak, record_id, body.get("tanda"), body.get("catatan"))
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        if item is None:
+            return JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
+        return {"ok": True, "kejadian": item}
 
     @app.get("/api/riwayat/{record_id}/klip")
     async def history_clip(record_id: str):

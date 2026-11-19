@@ -368,3 +368,39 @@ body.cctv[data-bar="jatuh"] #bar-text, body.cctv[data-bar="kekerasan"] #bar-text
   .tile-name, .tile-status { font-size: 13px; }
 }
 body.remote #cctv-toggle { display: none !important; }
+
+/* ---- Pemutar inspeksi klip (Riwayat) ---- */
+.insp-note { margin: 0; font-size: 13px; color: #ffd43b !important; text-align: center; }
+#insp { width: 100%; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.insp-stage { width: 100%; height: min(52vh, 520px); display: flex; align-items: center; justify-content: center;
+  background: #000; border-radius: 10px; overflow: hidden; touch-action: none; }
+#insp-canvas { max-width: 100%; max-height: 100%; cursor: grab; touch-action: none; }
+#insp-msg { margin: 0; min-height: 18px; font-size: 13px; }
+.insp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.insp-row label { display: flex; align-items: center; gap: 6px; }
+.insp-row select, #insp-catatan { font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 8px; }
+#insp-catatan { flex: 1 1 240px; min-width: 0; resize: vertical; }
+#history-dialog .insp-row button, #history-dialog .button-link {
+  font-size: 14px; padding: 8px 12px; border-radius: 8px; background: #303944; color: #fff; text-decoration: none; }
+#history-dialog [data-tanda].active { background: var(--green); }
+#history-dialog [data-tanda="keliru"].active { background: #b54708; }
+#history-dialog [data-tanda="tindak"].active { background: var(--red); }
+#insp-time, #insp-involved, #insp-v1 { font-size: 13px; color: #b7c7da; }
+.insp-timeline { position: relative; width: 100%; }
+#insp-pos { width: 100%; margin: 6px 0; }
+#insp-marks { position: absolute; left: 8px; right: 8px; top: 0; height: 100%; pointer-events: none; }
+.insp-mark { position: absolute; top: 2px; width: 3px; height: 8px; transform: translateX(-1px); border-radius: 2px; }
+.insp-mark.skor { background: #f79009; }
+.insp-mark.kejadian { background: var(--red); width: 4px; height: 26px; top: -2px; }
+#history-summary { font-size: 13px; color: #b7c7da; }
+.history-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px;
+  background: #2f4158; color: #fff; }
+.history-badge[data-tanda="benar"] { background: var(--green); }
+.history-badge[data-tanda="keliru"] { background: #b54708; }
+.history-badge[data-tanda="tindak"] { background: var(--red); }
+body.remote .insp-laptop { display: none !important; }
+@media (max-width: 760px) {
+  /* HP: daftar kejadian dibatasi tingginya supaya pemutar mendapat ruang */
+  .history-body { grid-template-rows: minmax(0, 24vh) minmax(0, 1fr); }
+  .insp-stage { height: 34vh; }
+}

@@ -152,8 +152,8 @@ class Config:
     camera_flip: bool = False         # balik kiri-kanan untuk driver yang mengirim gambar tercermin
     # riwayat kejadian dan klip bukti (data/riwayat/), hanya di laptop ini
     clips_enabled: bool = True        # tombol di panel Riwayat; pilihan terakhir diingat per laptop
-    clip_before_s: float = 5.0        # klip mulai sekian detik sebelum kejadian
-    clip_after_s: float = 3.0         # ... dan berakhir sekian detik sesudahnya
+    clip_before_s: float = 8.0        # klip mulai sekian detik sebelum kejadian (inspeksi: cukup konteks)
+    clip_after_s: float = 5.0         # ... dan berakhir sekian detik sesudahnya
     clip_keep_days: float = 7.0       # catatan dan klip dihapus otomatis setelah sekian hari
     # zona pantau: titik [x, y] ternormalisasi (0..1); None = seluruh gambar. Digambar di layar, diingat per laptop.
     zone: list | None = None

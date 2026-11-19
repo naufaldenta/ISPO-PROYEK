@@ -6,6 +6,7 @@
   const dialog = $("history-dialog");
   const JENIS = { jatuh: "Jatuh", kekerasan: "Indikasi kekerasan" };
   const MODE = { full: "seluruh badan", upper: "setengah badan" };
+  const TANDA = { benar: "Kejadian benar", keliru: "Alarm keliru", tindak: "Perlu tindak lanjut" };
 
   let seenSeq = null;      // jumlah kejadian saat panel terakhir dibuka (atau saat halaman dimuat)
   let lastSeq = 0;
@@ -63,6 +64,13 @@
       const clip = it.klip ? "klip tersedia" : (it.menyimpan ? "menyimpan klip…" : "tanpa klip");
       meta.textContent = [it.kamera_nama, when(it.waktu), MODE[it.mode], clip].filter(Boolean).join(" · ");
       btn.append(title, meta);
+      if (it.tanda) {
+        const badge = document.createElement("span");
+        badge.className = "history-badge";
+        badge.dataset.tanda = it.tanda;
+        badge.textContent = TANDA[it.tanda] || it.tanda;
+        title.append(badge);
+      }
       btn.disabled = !it.klip;
       btn.addEventListener("click", () => play(it));
       li.append(btn);
@@ -78,6 +86,10 @@
       .then((r) => {
         items = r.kejadian || [];
         keepClips = !!r.simpan_klip;
+        const s = r.ringkasan;
+        $("history-summary").textContent = s && items.length
+          ? `Tindak lanjut: ${s.benar} kejadian benar · ${s.keliru} alarm keliru · ${s.tindak} perlu tindak lanjut · ${s.belum} belum ditandai`
+          : "";
         if (r.hari) days = r.hari;
         updateToggle();
         renderList();
@@ -89,18 +101,18 @@
 
   function play(it) {
     playing = it;
-    $("history-player").src = `/api/riwayat/${encodeURIComponent(it.id)}/klip?t=${Date.now()}`;
     $("history-caption").textContent = describe(it);
-    $("history-replay").hidden = false;
+    window.SahabatInspeksi.open(it);
     renderList();
   }
 
   function stopPlayer() {
-    $("history-player").removeAttribute("src");    // memutus aliran klip yang masih berjalan
+    window.SahabatInspeksi.close();
     playing = null;
     $("history-caption").textContent = "Pilih kejadian untuk memutar klip buktinya.";
-    $("history-replay").hidden = true;
   }
+
+  document.addEventListener("sahabat-riwayat-ubah", () => load());
 
   document.addEventListener("sahabat-riwayat", (ev) => {
     const r = ev.detail;
@@ -143,7 +155,6 @@
 
   $("history-close").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => { clearTimeout(refreshTimer); stopPlayer(); });
-  $("history-replay").addEventListener("click", () => { if (playing) play(playing); });
 
   $("clips-toggle").addEventListener("click", () => {
     fetch("/api/riwayat/klip", { method: "POST", headers: { "Content-Type": "application/json" },

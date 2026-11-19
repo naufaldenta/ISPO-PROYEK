@@ -278,7 +278,7 @@ def test_without_history_the_page_is_told_so(client):
 
 def test_page_has_the_history_button_and_panel(client):
     text = client.get("/").text
-    assert 'id="history"' in text and 'id="history-dialog"' in text and 'id="history-player"' in text
+    assert 'id="history"' in text and 'id="history-dialog"' in text and 'id="insp-canvas"' in text
 
 
 class ZoneEngine(StubEngine):

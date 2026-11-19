@@ -22,6 +22,10 @@ from typing import Callable
 LOG_FILE = "riwayat.jsonl"
 CLIP_DIR = "klip"
 TIMES_FILE = "waktu.txt"
+OVERLAY_FILE = "overlay.json"       # klip versi 2: kerangka, warna, label, dan skor penilai per frame
+META_FILE = "meta.json"             # klip versi 2: ukuran, detik kejadian, orang yang terlibat, zona
+TANDA = {"benar": "Kejadian benar", "keliru": "Alarm keliru", "tindak": "Perlu tindak lanjut"}
+MAX_CATATAN = 300
 MIN_FREE_BYTES = 1024 ** 3          # klip tidak disimpan bila disk hampir penuh; catatan tetap ditulis
 MAX_LISTED = 200
 
@@ -41,17 +45,22 @@ class Kejadian:
     klip: bool
     kamera: str = ""                # Mode CCTV: ID kamera; "" = kamera Mode Pameran
     kamera_nama: str = ""
+    tanda: str = ""                 # tindak lanjut guru: "" | benar | keliru | tindak (lihat TANDA)
+    catatan: str = ""               # catatan singkat guru (teks biasa, maks. MAX_CATATAN huruf)
 
 
 @dataclass
 class _Capture:
     record: Kejadian
     end_t: float
-    frames: list[tuple[float, bytes]]
+    frames: list[tuple[float, bytes, dict | None]]
     kamera: str = ""
+    event_t: float = 0.0
 
 
 class Riwayat:
+    accepts_overlay = True          # Engine mengirim frame asli + data kerangka (klip versi 2)
+
     def __init__(self, folder: Path, *, keep_clips: bool = True, before_s: float = 5.0, after_s: float = 3.0,
                  keep_days: float = 7.0, clock: Callable[[], float] = time.time,
                  free_bytes: Callable[[Path], int] = _free_bytes, min_free: int = MIN_FREE_BYTES,
@@ -66,7 +75,7 @@ class Riwayat:
         self.min_free = min_free
         self._background = background
         self._lock = threading.RLock()
-        self._rings: dict[str, deque[tuple[float, bytes]]] = {}     # per kamera ("" = Mode Pameran)
+        self._rings: dict[str, deque[tuple[float, bytes, dict | None]]] = {}   # per kamera ("" = Mode Pameran)
         self._open: list[_Capture] = []
         self._writers: list[threading.Thread] = []
         self._used_ids: set[str] = set()
@@ -94,13 +103,14 @@ class Riwayat:
                 self._rings.clear()
             return self.keep_clips
 
-    def frame(self, t: float, jpeg: bytes, kamera: str = "") -> None:
-        """Frame layar terbaru (JPEG, sudah berkerangka) satu kamera. Dipanggil tiap putaran penilaian."""
+    def frame(self, t: float, jpeg: bytes, kamera: str = "", overlay: dict | None = None) -> None:
+        """Frame terbaru satu kamera, tiap putaran penilaian. Dengan overlay: frame asli + data kerangka (versi 2);
+        tanpa overlay: frame layar yang sudah berkerangka (versi 1)."""
         if not self.wants_frames:
             return
         with self._lock:
             ring = self._rings.setdefault(kamera, deque())
-            ring.append((t, jpeg))
+            ring.append((t, jpeg, overlay))
             while ring and t - ring[0][0] > self.before_s + 0.5:
                 ring.popleft()
             done = []
@@ -108,7 +118,7 @@ class Riwayat:
                 if cap.kamera != kamera:
                     continue
                 if t <= cap.end_t + 1e-6:
-                    cap.frames.append((t, jpeg))
+                    cap.frames.append((t, jpeg, overlay))
                 if t >= cap.end_t - 1e-6:
                     done.append(cap)
             for cap in done:
@@ -128,8 +138,8 @@ class Riwayat:
             self.seq += 1
             if clip:
                 ring = self._rings.get(kamera, ())
-                frames = [(ft, j) for ft, j in ring if ft >= t - self.before_s - 1e-6]
-                self._open.append(_Capture(record, t + self.after_s, frames, kamera))
+                frames = [f for f in ring if f[0] >= t - self.before_s - 1e-6]
+                self._open.append(_Capture(record, t + self.after_s, frames, kamera, t))
             return record
 
     def close(self) -> None:
@@ -159,6 +169,70 @@ class Riwayat:
                 item["menyimpan"] = rec.id in open_ids
                 out.append(item)
             return out
+
+    def set_tindak(self, record_id: str, tanda: str | None, catatan: str | None) -> dict | None:
+        """Tanda tindak lanjut dan catatan guru. None = pertahankan yang lama, "" = hapus. None bila tidak ada."""
+        if tanda is not None and (not isinstance(tanda, str) or (tanda and tanda not in TANDA)):
+            raise ValueError("Tanda tindak lanjut tidak dikenal.")
+        if catatan is not None and (not isinstance(catatan, str) or len(catatan) > MAX_CATATAN):
+            raise ValueError(f"Catatan paling panjang {MAX_CATATAN} huruf.")
+        if self.disabled or not _safe_id(record_id):
+            return None
+        with self._lock:
+            records = self._read_all()
+            target = next((r for r in records if r.id == record_id), None)
+            if target is None:
+                return None
+            if tanda is not None:
+                target.tanda = tanda
+            if catatan is not None:
+                target.catatan = catatan.strip()
+            self._rewrite(records)
+        return next((i for i in self.list() if i["id"] == record_id), None)
+
+    def ringkasan(self, kamera: str | None = None) -> dict:
+        """Jumlah tanda tindak lanjut (dan jenis kejadian) atas semua catatan yang masih tersimpan."""
+        out = {"benar": 0, "keliru": 0, "tindak": 0, "belum": 0, "jatuh": 0, "kekerasan": 0}
+        if self.disabled:
+            return out
+        with self._lock:
+            for r in self._read_all():
+                if kamera is not None and r.kamera != kamera:
+                    continue
+                out[r.tanda or "belum"] += 1
+                if r.jenis in out:
+                    out[r.jenis] += 1
+        return out
+
+    def clip_info(self, record_id: str) -> dict | None:
+        """{"versi", "waktu", "overlay", "meta"} klip ini, tanpa gambarnya. None bila klip tidak ada."""
+        if self.disabled or not _safe_id(record_id):
+            return None
+        try:
+            with zipfile.ZipFile(self._clip_path(record_id)) as z:
+                times = [float(x) for x in z.read(TIMES_FILE).decode("ascii").split()]
+                names = set(z.namelist())
+                overlay = json.loads(z.read(OVERLAY_FILE)) if OVERLAY_FILE in names else None
+                meta = json.loads(z.read(META_FILE)) if META_FILE in names else None
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+            return None
+        return {"versi": 2 if overlay is not None else 1, "waktu": times, "overlay": overlay, "meta": meta}
+
+    def clip_frame(self, record_id: str, n: int) -> bytes | None:
+        """Satu JPEG klip (frame ke-n), tanpa membaca seluruh klip."""
+        if self.disabled or not _safe_id(record_id) or n < 0:
+            return None
+        try:
+            with zipfile.ZipFile(self._clip_path(record_id)) as z:
+                return z.read(f"{n:05d}.jpg")
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+            return None
+
+    def find(self, record_id: str) -> dict | None:
+        """Satu kejadian (bentuk list()) menurut ID, atau None."""
+        if self.disabled or not _safe_id(record_id):
+            return None
+        return next((i for i in self.list(limit=10 ** 6) if i["id"] == record_id), None)
 
     def clip(self, record_id: str) -> list[tuple[float, bytes]] | None:
         """Frame klip (detik sejak frame pertama, JPEG). None bila tidak ada."""
@@ -243,7 +317,9 @@ class Riwayat:
                 out.append(Kejadian(str(raw["id"]), float(raw["waktu"]), str(raw["jenis"]), str(raw["mode"]),
                                     [int(i) for i in raw["orang"]], str(raw.get("sumber", "model")),
                                     bool(raw.get("klip", False)), str(raw.get("kamera", "")),
-                                    str(raw.get("kamera_nama", ""))))
+                                    str(raw.get("kamera_nama", "")),
+                                    raw.get("tanda") if raw.get("tanda") in TANDA else "",
+                                    str(raw.get("catatan", ""))[:MAX_CATATAN]))
             except (ValueError, KeyError, TypeError):
                 continue
         for r in out:
@@ -263,10 +339,21 @@ class Riwayat:
     def _write_clip(self, cap: _Capture) -> None:
         t0 = cap.frames[0][0]
         buf = io.BytesIO()
+        overlays = [ov for _, _, ov in cap.frames]
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:          # JPEG sudah termampatkan
-            z.writestr(TIMES_FILE, "\n".join(f"{t - t0:.3f}" for t, _ in cap.frames))
-            for i, (_, jpeg) in enumerate(cap.frames):
-                z.writestr(f"{i:05d}.jpg", jpeg)
+            z.writestr(TIMES_FILE, "\n".join(f"{f[0] - t0:.3f}" for f in cap.frames))
+            for i, f in enumerate(cap.frames):
+                z.writestr(f"{i:05d}.jpg", f[1])
+            if any(ov is not None for ov in overlays):
+                first = next(ov for ov in overlays if ov is not None)
+                width, height = _frame_size(first, cap.frames[0][1])
+                zone = next((ov.get("zona") for ov in overlays if ov is not None and ov.get("zona")), None)
+                z.writestr(OVERLAY_FILE, json.dumps(
+                    [None if ov is None else {"orang": ov.get("orang", []), "skor": ov.get("skor", {})}
+                     for ov in overlays], ensure_ascii=False, separators=(",", ":")))
+                z.writestr(META_FILE, json.dumps({"versi": 2, "lebar": width, "tinggi": height,
+                                                  "kejadian_t": round(cap.event_t - t0, 3),
+                                                  "orang": list(cap.record.orang), "zona": zone}))
         path = self._clip_path(cap.record.id)
         tmp = path.with_suffix(".tmp")
         try:
@@ -274,6 +361,19 @@ class Riwayat:
             tmp.replace(path)
         except OSError:
             pass
+
+
+def _frame_size(overlay: dict, jpeg: bytes) -> tuple[int, int]:
+    size = overlay.get("ukuran")
+    if size and len(size) == 2:
+        return int(size[0]), int(size[1])
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        return (int(img.shape[1]), int(img.shape[0])) if img is not None else (0, 0)
+    except Exception:
+        return 0, 0
 
 
 def _safe_id(record_id: str) -> bool:
