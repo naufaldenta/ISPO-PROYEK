@@ -134,3 +134,24 @@ def test_assistant_is_safe_across_threads():
     for th in threads:
         th.join()
     assert errors == []
+
+
+# ---- temuan minor (Bagian 5) ----
+def test_advice_is_reset_when_the_source_changes():                                   # minor B5 #5
+    from sahabat.config import Config
+    from sahabat.engine import Engine
+    engine = Engine(Config(), None, _OnePerson())
+    frame = np.zeros((480, 640, 3), np.uint8)
+    for i in range(25):
+        engine.step(i * 0.1, frame, input_version=0)
+    assert engine.asisten.ringkas()["saran"][0].startswith("Badan terlihat utuh")
+    engine.step(2.6, frame, input_version=1)                  # sumber diganti (CCTV lain): mulai dari nol
+    assert engine.asisten.ringkas()["orang"] <= 1 and len(engine.asisten._obs) <= 1
+
+
+def test_advice_goes_stale_when_nothing_is_observed():                                 # minor B5 #5
+    clock = [100.0]
+    a = feed(Asisten(window_s=30.0, clock=lambda: clock[0]), standing(1.5, 1.0, 0.6), n=40)
+    assert a.ringkas()["saran"][0].startswith("Badan terlihat utuh")
+    clock[0] += 31.0                                          # kamera terputus: tidak ada pengamatan baru
+    assert a.ringkas()["saran"] == [WAIT]

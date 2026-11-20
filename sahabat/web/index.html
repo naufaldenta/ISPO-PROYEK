@@ -244,6 +244,8 @@
           <label>Nama pengguna <input id="kamera-onvif-user" autocomplete="off" value="admin"></label>
           <label>Kata sandi <input id="kamera-onvif-pass" type="password" autocomplete="new-password"></label>
         </div>
+        <label>Channel (NVR/DVR; kamera biasa: 1)
+          <input id="kamera-onvif-channel" type="number" min="1" max="64" value="1" inputmode="numeric"></label>
         <label class="kamera-check"><input id="kamera-onvif-sub" type="checkbox" checked> Substream (lebih ringan,
           disarankan)</label>
         <button id="kamera-onvif-go" type="button">Ambil alamat stream</button>

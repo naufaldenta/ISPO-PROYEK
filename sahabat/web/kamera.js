@@ -140,7 +140,13 @@
     ];
     let text = parts.join(" · ") + ".";
     if (!info.dml) text += " Jalankan scripts\\siapkan_gpu.ps1 untuk memasang paket GPU.";
-    else if (!info.model_onnx) text += " Model GPU belum ada; jalankan scripts\\siapkan_gpu.ps1 lagi.";
+    else if (!info.model_onnx) {
+      text += " Model GPU (models\\yolo11n-pose_416.onnx) belum ada; salin dari paket rilis SAHABAT.";
+    }
+    if (info.terakhir && typeof info.terakhir.ms === "number") {
+      const adaptor = typeof info.terakhir.gpu_id === "number" ? ` (adaptor #${info.terakhir.gpu_id})` : "";
+      text += ` GPU terakhir diukur: ${info.terakhir.ms} ms per gambar${adaptor}.`;
+    }
     if (info.aktif) text += " Sedang dipakai: " + info.aktif + ".";
     return text;
   }
@@ -240,9 +246,12 @@
     $("kamera-ubin").hidden = !grid;
   }
 
+  let deviceToken = 0;
   async function loadDevices(selected) {
+    const mine = ++deviceToken;           // ganti mode lalu Ubah memanggil ini dua kali; jawaban lama diabaikan
     try {
       const result = await api("/api/perangkat");
+      if (mine !== deviceToken) return;
       const select = $("kamera-perangkat");
       select.textContent = "";
       result.cameras.forEach((c) => select.add(new Option(c.name, c.id)));
@@ -400,7 +409,8 @@
     const pass = $("kamera-onvif-pass").value;
     try {
       const r = await post("/api/kamera/onvif", { xaddr: found.xaddr, pengguna: user, sandi: pass,
-                                                  substream: $("kamera-onvif-sub").checked });
+                                                  substream: $("kamera-onvif-sub").checked,
+                                                  channel: Number($("kamera-onvif-channel").value) || 1 });
       const cam = found;
       resetForm();
       setMode("alamat");

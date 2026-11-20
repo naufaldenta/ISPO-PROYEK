@@ -59,3 +59,14 @@ def test_summary_text_names_each_number():
     gpu["kekerasan_sesi17"]["alarm_keliru_per_jam"] = 36.0
     text = bg.ringkas(CPU, gpu)
     assert "F1 jatuh 0.833 → 0.833" in text and "alarm keliru/jam 34.12 → 36.0" in text
+
+
+def test_gate_also_requires_fall_alarms_not_later():                                  # minor B4 #11e
+    cpu = {"jatuh": {"f1": 0.833, "latensi_median": 1.22},
+           "kekerasan_sesi17": {"f1": 0.753, "tp": 32, "alarm_keliru_per_jam": 34.12}}
+    later = copy()
+    later["jatuh"]["latensi_median"] = 1.60
+    assert not lolos(cpu, later)
+    same = copy()
+    same["jatuh"]["latensi_median"] = 1.25                                    # selisih kecil (< 0,1 dtk) boleh
+    assert lolos(cpu, same)

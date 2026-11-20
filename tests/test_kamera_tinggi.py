@@ -166,3 +166,14 @@ def test_install_needs_ordinary_activity_recording():                      # Fin
     ok = {"tertangkap": 5, "keliru_klip": 0, "keliru_per_jam": 0.0}
     assert not kt.boleh_pasang_sekolah(lolos=True, jam_biasa=0.0)
     assert kt.boleh_pasang_sekolah(lolos=True, jam_biasa=0.2) and not kt.boleh_pasang_sekolah(lolos=False, jam_biasa=1.0)
+
+
+def test_fall_counts_use_every_clip_that_can_false_alarm():                          # minor B5 #10
+    stats = {"cauca": {"tp": 8, "pos": 10, "fp": 3, "neg": 10, "early": 1}}
+    tp, pos, fp, denom = kt._fall_counts(stats)
+    assert (tp, pos, fp) == (8, 10, 4) and denom == 20         # alarm sebelum jatuh bisa terjadi di klip jatuh juga
+
+
+def test_fall_result_names_its_denominator():                                        # review M-10
+    import inspect
+    assert '"bisa_keliru"' in inspect.getsource(kt.jatuh) and '"negatif": neg' not in inspect.getsource(kt.jatuh)

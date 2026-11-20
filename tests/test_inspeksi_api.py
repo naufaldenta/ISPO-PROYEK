@@ -196,3 +196,35 @@ def test_mp4_failure_is_a_clear_503(app_with_clips, monkeypatch):               
     with TestClient(app) as c:
         r = c.get(f"/api/riwayat/{ids['v2']}/unduh")
     assert r.status_code == 503 and r.json()["error"].startswith("MP4 belum bisa dibuat")
+
+
+# ---- temuan minor (Bagian 3) ----
+def test_cross_site_post_is_refused(app_with_clips):                                    # minor #5 (CSRF)
+    app, ids = app_with_clips
+    with TestClient(app) as c:
+        url = f"/api/riwayat/{ids['v2']}/tindak"
+        evil = c.post(url, json={"tanda": "keliru"}, headers={"Origin": "http://contoh-jahat.example"})
+        assert evil.status_code == 403
+        other_port = c.post("/api/ack", json={}, headers={"Origin": "http://127.0.0.1:3000"})
+        assert other_port.status_code == 403
+        same = c.post(url, json={"tanda": "benar"}, headers={"Origin": "http://testserver"})
+        assert same.status_code == 200 and same.json()["kejadian"]["tanda"] == "benar"
+
+
+def test_phone_does_not_receive_teacher_notes(app_with_clips):                          # minor #13
+    app, ids = app_with_clips
+    with TestClient(app) as c:
+        c.post(f"/api/riwayat/{ids['v2']}/tindak", json={"tanda": "tindak", "catatan": "Panggil orang tua A."})
+        assert any(k.get("catatan") for k in c.get("/api/riwayat").json()["kejadian"])
+    with TestClient(app, client=("192.168.1.50", 5000)) as p:
+        p.cookies.set(COOKIE, "ABCD2345")
+        listing = p.get("/api/riwayat").json()["kejadian"]
+        info = p.get(f"/api/riwayat/{ids['v2']}/info").json()["kejadian"]
+        assert all("catatan" not in k for k in listing) and "catatan" not in info
+        assert any(k.get("tanda") == "tindak" for k in listing)
+
+
+def test_info_carries_the_violence_threshold(app_with_clips):                           # minor #11
+    app, ids = app_with_clips
+    with TestClient(app) as c:
+        assert c.get(f"/api/riwayat/{ids['v2']}/info").json()["ambang_kekerasan"] == pytest.approx(0.8)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
@@ -129,8 +130,11 @@ def choose_compute(cfg: Config, frame, cache: dict, *, cpu_factory=None, gpu_fac
     from .pose import SharedPose, YoloPose
     mode = cfg.hitung if cfg.hitung in ph.HITUNG else "otomatis"
     imgsz = cfg.imgsz or cfg.imgsz_candidates[-1]
+    if lolos is None and mode != "cpu":
+        lolos = ph.baca_kesetaraan(ph.nama_gpu(), imgsz)
+    key = (mode, imgsz, lolos, ph.dml_tersedia() if gpu_factory is None and mode != "cpu" else None)
     cached = cache.get("pilihan")
-    if cached is not None and cache.get("mode") == mode and not cache.get("gagal"):
+    if cached is not None and cache.get("kunci") == key and not cache.get("gagal"):
         return cached
 
     def cpu():
@@ -141,11 +145,11 @@ def choose_compute(cfg: Config, frame, cache: dict, *, cpu_factory=None, gpu_fac
         gpu_factory, found = ph.gpu_factory_bawaan(imgsz=imgsz)
         alasan_gpu = alasan_gpu if alasan_gpu is not None else found
     pilihan = ph.pilih(mode, cpu_factory=cpu_factory or cpu, gpu_factory=gpu_factory, frame=frame,
-                       lolos=ph.baca_kesetaraan(ph.nama_gpu(), imgsz) if lolos is None else lolos,
-                       alasan_gpu=alasan_gpu or "")
-    cache.update(pilihan=pilihan, mode=mode, gagal=False)
+                       lolos=lolos, alasan_gpu=alasan_gpu or "")
+    cache.update(pilihan=pilihan, mode=mode, kunci=key, gagal=False)
     cache["cpu_factory"] = cpu_factory or cpu
     if pilihan.jenis == "gpu":
+        cfg.gpu_ms, cfg.gpu_id = round(pilihan.ms, 1), pilihan.device_id     # ditampilkan panel Kamera
         try:
             (save or _remember_gpu)(round(pilihan.ms, 1), pilihan.device_id)
         except OSError:
@@ -307,6 +311,12 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         if is_local(host):
             if _host_name(request.headers.get("host", "")) not in LOCAL_HOSTS:
                 return Response("Alamat tidak dikenal.", status_code=403, media_type="text/plain; charset=utf-8")
+            # Halaman situs lain yang terbuka di browser laptop yang sama tidak boleh mengubah apa pun (CSRF): browser
+            # selalu mengirim Origin pada POST lintas situs, dan untuk halaman SAHABAT sendiri Origin = Host.
+            origin = request.headers.get("origin")
+            if (request.method == "POST" and origin
+                    and urlsplit(origin).netloc.lower() != request.headers.get("host", "").lower()):
+                return JSONResponse({"ok": False, "error": "Permintaan dari situs lain ditolak."}, status_code=403)
             # POST kamera hanya JSON: form atau text/plain dari situs lain tidak memicu pemeriksaan CORS browser
             if (request.method == "POST" and request.url.path.startswith("/api/kamera")
                     and not request.headers.get("content-type", "").lower().startswith("application/json")):
@@ -335,8 +345,14 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     async def index():
         return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
 
+    def live():
+        """Runner Mode CCTV yang sedang hidup, atau None. Dibaca sekali per permintaan: Mode CCTV bisa dimatikan
+        di antara pemeriksaan dan pemakaian, sehingga "mode.cctv" bisa menjadi None di tengah jalan."""
+        runner = getattr(mode, "cctv", None) if mode is not None else None
+        return runner if runner is not None and getattr(runner, "active", False) else None
+
     def cctv_on() -> bool:
-        return mode is not None and mode.hidup
+        return live() is not None
 
     def last_active(cam_id: str) -> bool:
         """Mode CCTV tanpa kamera aktif tidak memantau apa pun, jadi kamera aktif terakhir tidak boleh dilepas."""
@@ -346,10 +362,11 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         """Mode CCTV: pita, FPS, jumlah orang, dan nomor alarm diambil dari semua kamera."""
         if mode is None:
             return state
-        if not cctv_on():
+        runner = live()
+        if runner is None:
             state["cctv"] = {"aktif": False}
             return state
-        snap = mode.cctv.snapshot()
+        snap = runner.snapshot()
         state.update(bar=snap["bar"], text=snap["text"], fps=snap["fps"], people=snap["people"],
                      alarm_seq=snap["alarm_seq"], slow=snap["lambat"],
                      slow_text="Komputer tidak sanggup menilai semua kamera penuh" if snap["lambat"] else "")
@@ -360,8 +377,9 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     async def video_frame(kamera: str | None = None, kecil: int = 0):
         """Satu JPEG (ubin grid Mode CCTV). Ubin diminta ulang oleh layar tiap 0,2 dtk; tidak memakai stream, karena
         browser hanya membuka 6 sambungan per alamat dan stream ubin akan menahan tombol "Sudah diperiksa"."""
-        if kamera and cctv_on():
-            jpeg = await run_in_threadpool(mode.cctv.latest_jpeg, kamera, bool(kecil))
+        runner = live() if kamera else None
+        if runner is not None:
+            jpeg = await run_in_threadpool(runner.latest_jpeg, kamera, bool(kecil))
         else:
             jpeg = await run_in_threadpool(engine.latest_jpeg)
         if not jpeg:
@@ -374,8 +392,9 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         gap = _video_gap(local, bool(kecil) and bool(kamera))
 
         def grab():
-            if kamera and cctv_on():
-                return mode.cctv.latest_jpeg(kamera, small=bool(kecil))
+            runner = live() if kamera else None
+            if runner is not None:
+                return runner.latest_jpeg(kamera, small=bool(kecil))
             return engine.latest_jpeg()
 
         async def frames():
@@ -478,10 +497,11 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
                 target = body["kamera"]
         except ValueError:
             pass
-        if cctv_on():
+        runner = live()
+        if runner is not None:
             if target == "semua":
-                return {"ok": bool(await run_in_threadpool(mode.cctv.acknowledge_all))}
-            return {"ok": bool(await run_in_threadpool(mode.cctv.acknowledge, target))}
+                return {"ok": bool(await run_in_threadpool(runner.acknowledge_all))}
+            return {"ok": bool(await run_in_threadpool(runner.acknowledge, target))}
         return {"ok": bool(await run_in_threadpool(engine.acknowledge))}
 
     @app.get("/api/cctv")
@@ -515,12 +535,13 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             gpu_names["gpu"] = ph.nama_gpu()          # PowerShell ±1 dtk: cukup sekali per sesi
         cfg = getattr(engine, "cfg", None)
         hitung = getattr(cfg, "hitung", "otomatis")
-        on = mode is not None and mode.hidup
+        runner = live()
         imgsz = (getattr(cfg, "imgsz", None) or Config().imgsz_candidates[-1]) if cfg is not None else 416
         return {"ok": True, "hitung": hitung if hitung in ph.HITUNG else "otomatis", "gpu": gpu_names["gpu"],
                 "dml": ph.dml_tersedia(), "model_onnx": ONNX_MODEL.exists(),
                 "lolos": ph.baca_kesetaraan(gpu_names["gpu"], imgsz),
-                "aktif": getattr(mode.cctv, "perangkat", None) if on else None}
+                "aktif": getattr(runner, "perangkat", None) if runner is not None else None,
+                "terakhir": {"ms": getattr(cfg, "gpu_ms", None), "gpu_id": getattr(cfg, "gpu_id", None)}}
 
     @app.get("/api/cctv/hitung")
     async def compute_get():
@@ -549,6 +570,18 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             pesan = "Tersimpan. Berlaku saat Mode CCTV dinyalakan berikutnya (matikan lalu nyalakan lagi)."
         return {**await run_in_threadpool(compute_info), "pesan": pesan}
 
+    position_lock = asyncio.Lock()
+
+    def refresh_recording_meta(camera=None) -> None:
+        """Rekam uji sedang berjalan: meta.json mengikuti kamera dan posisi terbaru (dipilih sesudah mulai)."""
+        recorder = getattr(engine, "recorder", None)
+        cfg = getattr(engine, "cfg", None)
+        if recorder is None or cfg is None or not getattr(recorder, "active", False) or not getattr(recorder, "meta", None):
+            return
+        import dataclasses
+        current = dataclasses.replace(cfg, camera=camera) if camera is not None else cfg
+        recorder.perbarui_meta(**session_meta(current, biasa=recorder.meta.get("jenis") == "biasa"))
+
     def position_info() -> dict:
         from .profil_kamera import LABEL, model_untuk, posisi_bersih
         posisi = posisi_bersih(getattr(getattr(engine, "cfg", None), "posisi_kamera", "dada"))
@@ -559,7 +592,7 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     async def assistant(kamera: str | None = None):
         """Petunjuk pemasangan: kamera Mode CCTV (?kamera=ID) atau kamera Mode Pameran. Hanya membaca."""
         if kamera:
-            runner = mode.cctv if mode is not None and mode.hidup else None
+            runner = live()
             helper = getattr(runner, "asisten", None)
             result = await run_in_threadpool(helper, kamera) if helper is not None else None
         else:
@@ -586,12 +619,14 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         if value not in POSISI:
             return JSONResponse({"ok": False, "error": "Pilih posisi kamera dari daftar."}, status_code=400)
         cfg = getattr(engine, "cfg", None)
-        if cfg is not None:
-            cfg.posisi_kamera = value
-        models = await run_in_threadpool(model_untuk, value)
-        swap = getattr(engine, "ganti_model", None)
-        if swap is not None:
-            await run_in_threadpool(swap, models.violence, models.fall)
+        async with position_lock:           # dua pilihan beruntun diterapkan berurutan, model = pilihan terakhir
+            if cfg is not None:
+                cfg.posisi_kamera = value
+            models = await run_in_threadpool(model_untuk, value)
+            swap = getattr(engine, "ganti_model", None)
+            if swap is not None:
+                await run_in_threadpool(swap, models.violence, models.fall)
+            await run_in_threadpool(refresh_recording_meta)
         try:
             await run_in_threadpool(remember_posisi, value)
         except OSError:
@@ -644,12 +679,18 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     async def ping():
         return {"app": "sahabat"}
 
+    def _for_viewer(request: Request, item: dict) -> dict:
+        """Catatan guru (bisa berisi nama siswa) hanya untuk laptop SAHABAT, tidak untuk layar HP / laptop lain."""
+        if is_local(request.client.host if request.client else None):
+            return item
+        return {k: v for k, v in item.items() if k != "catatan"}
+
     @app.get("/api/riwayat")
-    async def history(kamera: str | None = None):
+    async def history(request: Request, kamera: str | None = None):
         riwayat = getattr(engine, "riwayat", None)
         if riwayat is None or riwayat.disabled:
             return {"ok": False, "kejadian": [], "simpan_klip": False, "hari": 0}
-        items = await run_in_threadpool(_list_riwayat, riwayat, kamera)
+        items = [_for_viewer(request, i) for i in await run_in_threadpool(_list_riwayat, riwayat, kamera)]
         summary = await run_in_threadpool(riwayat.ringkasan, kamera)
         return {"ok": True, "kejadian": items, "ringkasan": summary, "simpan_klip": bool(riwayat.keep_clips),
                 "hari": riwayat.keep_days, "sebelum": riwayat.before_s, "sesudah": riwayat.after_s}
@@ -665,7 +706,7 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         return (riwayat, item), None
 
     @app.get("/api/riwayat/{record_id}/info")
-    async def history_info(record_id: str):
+    async def history_info(record_id: str, request: Request):
         target, error = await run_in_threadpool(clip_target, record_id)
         if error is not None:
             return error
@@ -674,8 +715,10 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         if info is None:
             return JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
         from .types import SKELETON_EDGES
+        threshold = getattr(getattr(engine, "cfg", None), "violence_threshold", Config().violence_threshold)
         return {"ok": True, **info, "jumlah": len(info["waktu"]), "tulang": [list(e) for e in SKELETON_EDGES],
-                "kejadian": item, "lain": await run_in_threadpool(_other_cameras, riwayat, item)}
+                "kejadian": _for_viewer(request, item), "ambang_kekerasan": threshold,
+                "lain": await run_in_threadpool(_other_cameras, riwayat, item)}
 
     @app.get("/api/riwayat/{record_id}/frame/{n}")
     async def history_frame(record_id: str, n: int):
@@ -724,6 +767,9 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             item = await run_in_threadpool(riwayat.set_tindak, record_id, body.get("tanda"), body.get("catatan"))
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except OSError:
+            return JSONResponse({"ok": False, "error": "Tanda belum tersimpan (folder riwayat tidak bisa ditulis)."},
+                                status_code=503)
         if item is None:
             return JSONResponse({"ok": False, "error": CLIP_MISSING}, status_code=404)
         return {"ok": True, "kejadian": item}
@@ -802,11 +848,12 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             body = None
         if not isinstance(body, dict) or "titik" not in body:
             return JSONResponse({"ok": False, "error": "Kirim titik zona."}, status_code=400)
-        if not (cctv_on() and isinstance(body.get("kamera"), str)) and not hasattr(engine, "set_zone"):
+        runner = live() if isinstance(body.get("kamera"), str) else None
+        if runner is None and not hasattr(engine, "set_zone"):
             return JSONResponse({"ok": False, "error": "Zona tidak tersedia."}, status_code=503)
-        if cctv_on() and isinstance(body.get("kamera"), str):
+        if runner is not None:
             try:
-                zone = await run_in_threadpool(mode.cctv.set_zone, body["kamera"], body["titik"])
+                zone = await run_in_threadpool(runner.set_zone, body["kamera"], body["titik"])
                 points = [list(p) for p in zone] if zone else None
                 await run_in_threadpool(kamera.set_zone, body["kamera"], points)
             except ValueError as exc:
@@ -859,21 +906,27 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     async def kamera_list():
         brands = [{"id": key, "nama": info["nama"], "port": info["port"], "channel": info["channel"]}
                   for key, info in MEREK.items()]
-        return {"ok": True, "kamera": await run_in_threadpool(_with_warning, kamera.list_public()), "merek": brands}
+        items = await run_in_threadpool(lambda: _with_warning(kamera.list_public()))
+        return {"ok": True, "kamera": items, "merek": brands}
 
     @app.post("/api/kamera")
     async def kamera_save(request: Request):
         try:
-            item = await run_in_threadpool(kamera.save, await _body(request))
+            body = await _body(request)
+            before = await run_in_threadpool(kamera.get_public, body.get("id")) if body.get("id") else None
+            item = await run_in_threadpool(kamera.save, body)
         except ValueError as exc:
             return _bad(exc)
         except OSError as exc:
             return _bad(OSError("Daftar kamera tidak bisa disimpan: " + str(exc)), 503)
         source = getattr(engine, "source", None)
-        if getattr(source, "spec", None) == IPCAM_PREFIX + item["id"] and hasattr(source, "reopen"):
+        stream_changed = before is None or before.get("rev") != item.get("rev")
+        if (stream_changed and getattr(source, "spec", None) == IPCAM_PREFIX + item["id"]
+                and hasattr(source, "reopen")):
             source.reopen()                 # kamera yang sedang dipakai langsung memakai alamat/sandi baru
-        if cctv_on():
-            await run_in_threadpool(mode.cctv.reload)
+        runner = live()
+        if runner is not None:
+            await run_in_threadpool(runner.reload)
         return {"ok": True, "kamera": item}
 
     @app.post("/api/kamera/{cam_id}/tanda")
@@ -884,15 +937,17 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             aktif, prioritas = body.get("aktif"), body.get("prioritas")
             if not all(v is None or isinstance(v, bool) for v in (aktif, prioritas)):
                 raise ValueError("Tanda kamera harus true/false.")
-            if aktif is False and cctv_on() and mode.cctv.has_unacked(cam_id):
+            runner = live()
+            if aktif is False and runner is not None and runner.has_unacked(cam_id):
                 return _bad(ValueError("Periksa alarm kamera ini dulu."), 409)
             if aktif is False and last_active(cam_id):
                 return _bad(ValueError(LAST_CAMERA), 409)
             item = await run_in_threadpool(kamera.set_flags, cam_id, aktif, prioritas)
         except ValueError as exc:
             return _bad(exc)
-        if cctv_on():
-            await run_in_threadpool(mode.cctv.reload)
+        runner = live()
+        if runner is not None:
+            await run_in_threadpool(runner.reload)
         return {"ok": True, "kamera": item}
 
     @app.delete("/api/kamera/{cam_id}")
@@ -900,14 +955,16 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         source = getattr(engine, "source", None)
         if getattr(source, "spec", None) == IPCAM_PREFIX + cam_id:
             return _bad(ValueError("Kamera ini sedang dipakai. Pilih kamera lain dulu di Perangkat."), 409)
-        if cctv_on() and mode.cctv.has_unacked(cam_id):
+        runner = live()
+        if runner is not None and runner.has_unacked(cam_id):
             return _bad(ValueError("Periksa alarm kamera ini dulu."), 409)
         if last_active(cam_id):
             return _bad(ValueError(LAST_CAMERA), 409)
         if not await run_in_threadpool(kamera.delete, cam_id):
             return _bad(ValueError("Kamera tidak ditemukan."), 404)
-        if cctv_on():
-            await run_in_threadpool(mode.cctv.reload)
+        runner = live()
+        if runner is not None:
+            await run_in_threadpool(runner.reload)
         return {"ok": True}
 
     @app.post("/api/kamera/uji")
@@ -932,8 +989,11 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             user, password = body.get("pengguna") or "", body.get("sandi") or ""
             if not isinstance(user, str) or not isinstance(password, str):
                 raise ValueError("Nama pengguna atau kata sandi tidak valid.")
+            channel = body.get("channel", 1)
+            if not isinstance(channel, int) or not 1 <= channel <= 64:
+                raise ValueError("Channel harus 1-64.")
             uri = await run_in_threadpool(onvif_stream_uri, xaddr, user, password,
-                                          substream=bool(body.get("substream", True)))
+                                          substream=bool(body.get("substream", True)), channel=channel)
         except (ValueError, OnvifError) as exc:
             return _bad(exc)
         return {"ok": True, "alamat": uri}
@@ -951,6 +1011,8 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
         try:
             values = await request.json()
             status = await run_in_threadpool(inputs.apply, values)
+            if isinstance(values, dict) and "camera" in values:
+                await run_in_threadpool(refresh_recording_meta, values["camera"])
             return {"ok": True, **status}
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)

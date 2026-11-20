@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import statistics
 import threading
+import time
 from collections import deque
 
 import numpy as np
@@ -52,8 +53,10 @@ def leg_torso_ratio(person: Person) -> float | None:
 
 
 class Asisten:
-    def __init__(self, window_s: float = 30.0) -> None:
+    def __init__(self, window_s: float = 30.0, clock=time.monotonic) -> None:
         self.window_s = window_s
+        self._clock = clock                 # jam server: saran basi bila tidak ada pengamatan baru selama window_s
+        self._last_seen: float | None = None
         self._obs: deque = deque()          # (t, mode, tinggi_orang, rasio | None, id)
         self._last_t: float | None = None
         self._lock = threading.Lock()       # amati() dari utas mesin, ringkas() dari utas server
@@ -67,8 +70,15 @@ class Asisten:
             rows.append((t, m, box_h / height, leg_torso_ratio(p) if m == "full" else None, p.track_id))
         with self._lock:
             self._last_t = t
+            self._last_seen = self._clock()
             self._obs.extend(rows)
             self._prune(t)
+
+    def reset(self) -> None:
+        """Sumber berganti (kamera lain): saran kamera sebelumnya tidak berlaku lagi."""
+        with self._lock:
+            self._obs.clear()
+            self._last_t = self._last_seen = None
 
     def _prune(self, now: float) -> None:
         while self._obs and now - self._obs[0][0] > self.window_s:
@@ -76,6 +86,8 @@ class Asisten:
 
     def ringkas(self, now: float | None = None) -> dict:
         with self._lock:
+            if self._last_seen is not None and self._clock() - self._last_seen > self.window_s:
+                self._obs.clear()           # kamera terputus / mesin dijeda: saran lama sudah basi
             now = self._last_t if now is None else now
             if now is not None:
                 self._prune(now)

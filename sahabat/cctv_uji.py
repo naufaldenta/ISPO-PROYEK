@@ -25,7 +25,10 @@ PESAN = {
     "jalur": "Alamat stream tidak ditemukan di kamera. Coba merek lain, channel lain, atau substream.",
     "tak_terjangkau": "Kamera tidak menjawab. Periksa IP, kabel/WiFi, dan pastikan laptop di jaringan yang sama.",
     "lain": "Kamera menolak sambungan. Coba substream atau Alamat lengkap.",
+    "dipakai": "Webcam / capture card tidak bisa dibuka. Mungkin sedang dipakai Mode Pameran atau aplikasi lain: "
+               "tutup pemakainya, lalu tekan Tes sambungan lagi.",
 }
+UNREACHABLE_CODES = {10051, 10060, 10065, 51, 65, 101, 113}   # jaringan/host tidak terjangkau (Windows dan POSIX)
 READ_S = 3.0                       # lama membaca untuk mengukur laju
 PREVIEW_WIDTH = 480
 
@@ -35,18 +38,34 @@ def _md5(text: str) -> str:
 
 
 def _auth_header(challenges: list[str], user: str, password: str, uri: str) -> str | None:
-    digest = next((c for c in challenges if c.lower().startswith("digest")), None)
+    def answerable(challenge: str) -> bool:
+        algo = re.search(r'algorithm\s*=\s*"?([\w-]+)', challenge, re.IGNORECASE)
+        return algo is None or algo.group(1).lower() in ("md5", "md5-sess")
+    # Kamera bisa menawarkan beberapa tantangan (misalnya SHA-256 lalu MD5): pilih yang bisa dijawab.
+    digest = next((c for c in challenges if c.lower().startswith("digest") and answerable(c)), None)
     if digest is not None:
-        fields = dict(re.findall(r'(\w+)="?([^",]*)"?', digest[len("digest"):]))
+        # Nilai berkutip boleh berisi koma (misalnya realm="IP Camera, Lobi").
+        fields = {k.lower(): (a if a else b)
+                  for k, a, b in re.findall(r'(\w+)\s*=\s*(?:"([^"]*)"|([^,\s]*))', digest[len("digest"):])}
         realm, nonce = fields.get("realm", ""), fields.get("nonce", "")
-        ha1, ha2 = _md5(f"{user}:{realm}:{password}"), _md5(f"DESCRIBE:{uri}")
+        algorithm = fields.get("algorithm", "")
+        cnonce, nc = secrets.token_hex(8), "00000001"
+        ha1 = _md5(f"{user}:{realm}:{password}")
+        if algorithm.lower() == "md5-sess":
+            ha1 = _md5(f"{ha1}:{nonce}:{cnonce}")
+        ha2 = _md5(f"DESCRIBE:{uri}")
         parts = [f'username="{user}"', f'realm="{realm}"', f'nonce="{nonce}"', f'uri="{uri}"']
-        if "auth" in fields.get("qop", "").split(","):
-            cnonce, nc = secrets.token_hex(8), "00000001"
+        if "auth" in [q.strip() for q in fields.get("qop", "").split(",")]:
             parts += [f'response="{_md5(f"{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}")}"', "qop=auth", f"nc={nc}",
                       f'cnonce="{cnonce}"']
         else:
             parts.append(f'response="{_md5(f"{ha1}:{nonce}:{ha2}")}"')
+            if algorithm.lower() == "md5-sess":
+                parts.append(f'cnonce="{cnonce}"')
+        if algorithm:
+            parts.append(f"algorithm={algorithm}")
+        if "opaque" in fields:
+            parts.append(f'opaque="{fields["opaque"]}"')        # wajib dikembalikan apa adanya bila diberi
         return "Digest " + ", ".join(parts)
     if any(c.lower().startswith("basic") for c in challenges):
         return "Basic " + base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
@@ -98,7 +117,11 @@ def rtsp_probe(url: str, timeout_s: float = 3.0) -> str:
                             code, _ = _describe(again, uri, 2, auth)
     except (socket.timeout, ConnectionError, socket.gaierror):
         return "tak_terjangkau"
-    except (OSError, ValueError):
+    except OSError as exc:
+        if exc.errno in UNREACHABLE_CODES or getattr(exc, "winerror", None) in UNREACHABLE_CODES:
+            return "tak_terjangkau"
+        return "lain"
+    except ValueError:
         return "lain"
     if 200 <= code < 300:
         return "ok"
@@ -131,16 +154,22 @@ def uji_sambungan(stream: Stream, timeout_s: float = 10.0, opener=open_stream) -
                 return _fail(result)
         elif scheme in ("http", "https") and not _reachable(url, min(3.0, timeout_s)):
             return _fail("tak_terjangkau")
-        cap = opener(url)
+        try:
+            cap = opener(url)
+        except cv2.error:                       # backend OpenCV menolak alamat ini: jawab ramah, bukan galat 500
+            return _fail("lain")
     elif kind == "webcam":
         from .source import VideoSource
-        cap = VideoSource(url)._open()
+        try:
+            cap = VideoSource(url)._open()
+        except cv2.error:
+            return _fail("dipakai")
     else:
         return _fail("lain")
     if cap is None or not cap.isOpened():
         if cap is not None:
             cap.release()
-        return _fail("lain")
+        return _fail("dipakai" if kind == "webcam" else "lain")
     try:
         times, first = [], None
         deadline = min(started + timeout_s, time.monotonic() + READ_S)

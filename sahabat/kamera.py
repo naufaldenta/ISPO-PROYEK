@@ -12,6 +12,7 @@ Ketiganya boleh memotong satu ubin dari tampilan mosaik DVR (potong = [grid, ubi
 """
 from __future__ import annotations
 
+import copy
 import ipaddress
 import json
 import os
@@ -88,6 +89,7 @@ def _potong(value) -> tuple[int, int] | None:
     return grid, ubin
 
 
+INCOMPLETE = "Isian kamera belum lengkap. Tekan Ubah di panel Kamera."
 # Nilai isian form yang tidak ada di berkas lama (sama dengan bawaan _clean).
 FORM_DEFAULTS = {"merek": "", "host": "", "port": 0, "channel": 1, "substream": True, "alamat": "", "perangkat": "",
                  "video": "", "pengguna": "", "potong": None}
@@ -99,6 +101,7 @@ class KameraStore:
         self.path = Path(path)
         self.video_dir = Path(video_dir) if video_dir is not None else VIDEO_DIR   # jenis "video" (simulasi)
         self._lock = threading.RLock()
+        self._unreadable = ""                 # berkas ada tetapi tidak bisa dibaca: jangan pernah ditimpa
         self._items: list[dict] = self._load()
 
     # ---- berkas ----
@@ -107,15 +110,37 @@ class KameraStore:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return []
-        except (OSError, ValueError):
+        except OSError as exc:                # izin ditolak, berkas dikunci aplikasi lain: isinya mungkin utuh
+            self._unreadable = str(exc)
+            print(f"Peringatan: {self.path} tidak bisa dibaca ({exc}); daftar kamera tidak akan ditimpa.")
+            return []
+        except ValueError:
             self._backup_broken()
             return []
         items = raw.get("kamera") if isinstance(raw, dict) else None
         if not isinstance(items, list):
             self._backup_broken()
             return []
-        return [it for it in items if isinstance(it, dict) and isinstance(it.get("id"), str)
-                and _ID.match(it["id"]) and it.get("jenis") in JENIS]
+        out = []
+        for it in items:
+            if not (isinstance(it, dict) and isinstance(it.get("id"), str) and _ID.match(it["id"])
+                    and it.get("jenis") in JENIS):
+                continue
+            # Entri yang diubah tangan atau dari versi lama bisa kurang isian: lengkapi, jangan sampai daftar 500.
+            for key, value in FORM_DEFAULTS.items():
+                got = it.get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and isinstance(got, str) and got.isdigit():
+                    it[key] = got = int(got)            # "8554" / "2" yang ditulis tangan tetap berlaku
+                if not isinstance(got, type(value)) and not (key == "potong" and isinstance(got, list)):
+                    it[key] = value
+            if it["jenis"] == "merek" and not it.get("port") and it.get("merek") in MEREK:
+                it["port"] = MEREK[it["merek"]]["port"]
+            if not isinstance(it.get("nama"), str) or not it["nama"].strip():
+                it["nama"] = "Kamera " + it["id"]
+            if not isinstance(it.get("sandi"), str):
+                it["sandi"] = ""
+            out.append(it)
+        return out
 
     def _backup_broken(self) -> None:
         """Berkas rusak disalin dulu supaya daftar lama tidak hilang begitu saja saat disimpan ulang."""
@@ -124,7 +149,19 @@ class KameraStore:
         except OSError:
             pass
 
+    def _commit(self, before: list[dict]) -> None:
+        """Tulis daftar; bila gagal, kembalikan daftar di memori ke keadaan sebelum perubahan."""
+        try:
+            self._write()
+        except OSError:
+            self._items = before
+            raise
+
     def _write(self) -> None:
+        self._retry_unreadable()
+        if self._unreadable:
+            raise OSError(f"berkas daftar kamera tidak bisa dibaca ({self._unreadable}); tutup aplikasi lain yang "
+                          "memakainya atau periksa izin folder data, lalu nyalakan ulang SAHABAT")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = None
         try:
@@ -223,8 +260,11 @@ class KameraStore:
 
     def _public(self, item: dict) -> dict:
         sandi, rusak = self._password(item)
-        shown = ("Video: " + item.get("video", "")) if item["jenis"] == "video" else \
-            samarkan(self._url(item, "x" if (sandi or rusak) else ""))
+        try:
+            shown = ("Video: " + item.get("video", "")) if item["jenis"] == "video" else \
+                samarkan(self._url(item, "x" if (sandi or rusak) else ""))
+        except ValueError:                  # entri tidak lengkap (diubah tangan / versi lama): tampil, bukan 500
+            shown = INCOMPLETE
         potong = item.get("potong")
         return {"id": item["id"], "nama": item["nama"], "jenis": item["jenis"], "merek": item.get("merek", ""),
                 "host": item.get("host", ""), "port": item.get("port", 0), "channel": item.get("channel", 1),
@@ -237,8 +277,18 @@ class KameraStore:
                 "posisi": posisi_bersih(item.get("posisi")), "rev": int(item.get("rev", 0))}
 
     # ---- API ----
+    def _retry_unreadable(self) -> None:
+        """Berkas sempat terkunci (antivirus, OneDrive) saat SAHABAT mulai: coba baca lagi sebelum dipakai."""
+        if not self._unreadable:
+            return
+        self._unreadable = ""
+        items = self._load()
+        if not self._unreadable:
+            self._items = items
+
     def list_public(self) -> list[dict]:
         with self._lock:
+            self._retry_unreadable()
             return [self._public(it) for it in self._items]
 
     def get_public(self, cam_id: str) -> dict | None:
@@ -248,6 +298,7 @@ class KameraStore:
 
     def save(self, data: dict) -> dict:
         with self._lock:
+            before = copy.deepcopy(self._items)
             clean, sandi = self._clean(data)
             cam_id = data.get("id")
             if cam_id:
@@ -256,7 +307,8 @@ class KameraStore:
                     raise ValueError("Kamera tidak ditemukan. Muat ulang daftar kamera.")
                 old_sandi = item.get("sandi", "")
                 kept = {k: item[k] for k in ("aktif", "prioritas", "zona") if k in item}   # hanya lewat set_*
-                same_stream = sandi is None and all(
+                no_new_password = sandi is None or (clean["jenis"] == "video" and sandi == "")
+                same_stream = no_new_password and all(
                     (list(v) if isinstance(v, tuple) else v) == item.get(k, FORM_DEFAULTS.get(k))
                     for k, v in clean.items() if k != "posisi")
                 # naik tiap simpan (Mode CCTV menyambung ulang), kecuali yang berubah hanya posisi kamera
@@ -273,16 +325,17 @@ class KameraStore:
                 self._items.append(item)
             if item.get("potong"):
                 item["potong"] = list(item["potong"])
-            self._write()
+            self._commit(before)
             return self._public(item)
 
     def delete(self, cam_id: str) -> bool:
         with self._lock:
+            before = copy.deepcopy(self._items)
             item = self._find(cam_id)
             if item is None:
                 return False
             self._items.remove(item)
-            self._write()
+            self._commit(before)
             return True
 
     def resolve(self, spec: str) -> Stream | None:
@@ -298,11 +351,15 @@ class KameraStore:
                 return Stream("", potong, f"Video {item.get('video', '')} tidak ada di folder video.")
             if rusak:                       # mencoba login tanpa sandi berulang kali bisa mengunci akun kamera
                 return Stream("", potong, PASSWORD_UNREADABLE)
-            return Stream(self._url(item, sandi), potong)
+            try:
+                return Stream(self._url(item, sandi), potong)
+            except ValueError:
+                return Stream("", potong, INCOMPLETE)
 
     def set_flags(self, cam_id: str, aktif: bool | None = None, prioritas: bool | None = None) -> dict:
         """Tanda Mode CCTV: ikut dinilai (aktif) dan didahulukan penjadwal (prioritas)."""
         with self._lock:
+            before = copy.deepcopy(self._items)
             item = self._find(cam_id)
             if item is None:
                 raise ValueError("Kamera tidak ditemukan.")
@@ -310,25 +367,28 @@ class KameraStore:
                 item["aktif"] = bool(aktif)
             if prioritas is not None:
                 item["prioritas"] = bool(prioritas)
-            self._write()
+            self._commit(before)
             return self._public(item)
 
     def set_zone(self, cam_id: str, zona) -> dict:
         """Zona pantau kamera ini (titik ternormalisasi dari sahabat.zone.normalize) atau None."""
         with self._lock:
+            before = copy.deepcopy(self._items)
             item = self._find(cam_id)
             if item is None:
                 raise ValueError("Kamera tidak ditemukan.")
             item["zona"] = [list(map(float, p)) for p in zona] if zona else None
-            self._write()
+            self._commit(before)
             return self._public(item)
 
     def active(self) -> list[dict]:
         with self._lock:
+            self._retry_unreadable()
             return [self._public(it) for it in self._items if it.get("aktif", True)]
 
     def catalog(self) -> list[dict]:
         with self._lock:
+            self._retry_unreadable()
             return [{"id": IPCAM_PREFIX + it["id"], "name": it["nama"]} for it in self._items]
 
     def form_stream(self, data: dict) -> Stream:

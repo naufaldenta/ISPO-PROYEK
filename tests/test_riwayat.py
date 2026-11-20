@@ -268,3 +268,101 @@ def test_summary_per_camera(tmp_path):
     r.event(0.0, "jatuh", "full", [1], kamera="k2")
     r.set_tindak(a.id, "benar", None)
     assert r.ringkasan(kamera="k1") == {"benar": 1, "keliru": 0, "tindak": 0, "belum": 0, "jatuh": 1, "kekerasan": 0}
+
+
+# ---- temuan minor (Bagian 3) ----
+def test_clip_being_written_is_reported_as_saving(tmp_path):                            # minor #4
+    import threading
+    gate = threading.Event()
+    r = Riwayat(tmp_path, background=True, clock=Clock(), free_bytes=lambda _: 10 ** 12, before_s=0.5, after_s=0.5)
+    original = r._write_clip
+
+    def slow(cap):
+        gate.wait(5)
+        original(cap)
+    r._write_clip = slow
+    for i in range(12):
+        r.frame(i * 0.1, b"jpeg", kamera="")
+        if i == 3:
+            rec = r.event(i * 0.1, "jatuh", "full", [1])
+    item = r.find(rec.id)
+    assert item["menyimpan"] and not item["klip"]                 # zip belum ditulis: "sedang disimpan", bukan 404
+    gate.set()
+    r.close()
+    item = r.find(rec.id)
+    assert item["klip"] and not item["menyimpan"]
+
+
+def test_marks_on_old_events_and_failed_writes(tmp_path, monkeypatch):                  # minor #6
+    import pytest as _pytest
+    r = Riwayat(tmp_path, background=False, clock=Clock(), free_bytes=lambda _: 10 ** 12, keep_clips=False)
+    first = r.event(0.0, "jatuh", "full", [1])
+    for i in range(250):                                          # kejadian lama tidak lagi di 200 terbaru
+        r.event(float(i + 1), "kekerasan", "full", [1, 2])
+    assert r.set_tindak(first.id, "benar", "")["tanda"] == "benar"
+    monkeypatch.setattr(r, "_rewrite", lambda records, strict=False: (_ for _ in ()).throw(OSError("disk penuh")))
+    with _pytest.raises(OSError):
+        r.set_tindak(first.id, "keliru", None)
+
+
+def test_listing_does_not_wait_for_the_engine_lock(tmp_path):                           # minor #7
+    import threading
+    r = Riwayat(tmp_path, background=False, clock=Clock(), free_bytes=lambda _: 10 ** 12, keep_clips=False)
+    rec = r.event(0.0, "jatuh", "full", [1])
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with r._lock:
+            held.set()
+            release.wait(5)
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(5)
+    got = {}
+    reader = threading.Thread(target=lambda: got.update(item=r.find(rec.id), n=len(r.list())))
+    reader.start()
+    reader.join(1.0)
+    release.set()
+    t.join()
+    assert got.get("item") is not None and got.get("n") == 1
+
+
+def test_forgetting_a_camera_drops_its_ring_and_saves_open_clips(tmp_path):             # minor B2 #10
+    r = Riwayat(tmp_path, background=False, clock=Clock(), free_bytes=lambda _: 10 ** 12, before_s=0.5, after_s=3.0)
+    for i in range(5):
+        r.frame(i * 0.1, b"jpeg", kamera="k1")
+    rec = r.event(0.4, "jatuh", "full", [1], kamera="k1")
+    r.lupakan_kamera("k1")
+    assert "k1" not in r._rings and not r._open and r.find(rec.id)["klip"]
+
+
+# ---- perbaikan review akhir batch minor ----
+def test_mark_survives_a_reader_holding_the_log_open(tmp_path, monkeypatch):           # review M-1
+    import os as _os
+    r = Riwayat(tmp_path, background=False, clock=Clock(), free_bytes=lambda _: 10 ** 12, keep_clips=False)
+    rec = r.event(0.0, "jatuh", "full", [1])
+    real, fails = _os.replace, [2]
+
+    def busy_replace(src, dst):                 # Windows: berkas sedang dibaca utas lain -> WinError 5 sesaat
+        if fails[0]:
+            fails[0] -= 1
+            raise PermissionError(5, "Akses ditolak")
+        return real(src, dst)
+    monkeypatch.setattr(_os, "replace", busy_replace)
+    assert r.set_tindak(rec.id, "benar", None)["tanda"] == "benar"
+
+
+def test_clip_whose_writer_crashes_is_not_saving_forever(tmp_path, monkeypatch):        # review M-2
+    import zipfile as _zipfile
+    r = Riwayat(tmp_path, background=False, clock=Clock(), free_bytes=lambda _: 10 ** 12, before_s=0.5, after_s=0.3)
+    monkeypatch.setattr(_zipfile, "ZipFile", lambda *a, **k: (_ for _ in ()).throw(MemoryError("penuh")))
+    rec = None
+    for i in range(10):
+        try:
+            r.frame(i * 0.1, b"jpeg", kamera="")
+        except MemoryError:
+            pass
+        if i == 2:
+            rec = r.event(0.2, "jatuh", "full", [1])
+    item = r.find(rec.id)
+    assert not item["menyimpan"]

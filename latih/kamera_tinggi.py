@@ -33,7 +33,9 @@ P3 = DATA / "putaran3"
 ROOT = DATA / "kamera-tinggi"
 BUS_ZIP = P3 / "bus-violence.zip"
 DEV_FRAC = 0.2
-# Nomor grup yang tidak bertabrakan dengan data lama: AIRTLab 3000-4999, Bus uji 5000-5279, sesi webcam 9000-an.
+# Nomor grup data kamera tinggi. Tidak bertabrakan dengan data uji (AIRTLab 3000-4999, Bus uji 5000-5279); GMDCSA di
+# baris latih model terpasang juga mulai 10000, tetapi baris itu tidak pernah dibagi per grup (cek_bocor tidak
+# membandingkannya).
 BUS_TRAIN_GROUP, SCFD_GROUP = 10000, 20000
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "docs" / "uji" / "kamera-tinggi"
@@ -339,11 +341,13 @@ def fall_sets(data: Path = DATA, cfg=None) -> tuple[list, list, list]:
 
 
 def _fall_counts(stats: dict) -> tuple[int, int, int, int]:
+    """(tertangkap, klip jatuh, klip beralarm keliru, klip yang bisa beralarm keliru). Alarm sebelum jatuh dimulai
+    juga keliru, jadi penyebut alarm keliru adalah semua klip (biasa + jatuh), bukan hanya klip biasa."""
     tp = sum(v["tp"] for v in stats.values())
     pos = sum(v["pos"] for v in stats.values())
-    fp = sum(v["fp"] + v["early"] for v in stats.values())            # alarm sebelum jatuh juga keliru
-    neg = sum(v["neg"] for v in stats.values())
-    return tp, pos, fp, neg
+    fp = sum(v["fp"] + v["early"] for v in stats.values())
+    every = sum(v["neg"] + v["pos"] for v in stats.values())
+    return tp, pos, fp, every
 
 
 def _fall_per_jam(models: dict, gates: dict, cfg) -> dict:
@@ -416,8 +420,8 @@ def jatuh(install: bool = False) -> int:
     per_jam = _fall_per_jam({"sekarang": installed, chosen: models[chosen]}, gates, cfg)
     result = {}
     for name in ("sekarang", chosen):
-        tp, pos, fp, neg = _fall_counts(test_result[name]["metrics"])
-        result[name] = {"tertangkap": tp, "positif": pos, "keliru_klip": fp, "negatif": neg,
+        tp, pos, fp, every = _fall_counts(test_result[name]["metrics"])
+        result[name] = {"tertangkap": tp, "positif": pos, "keliru_klip": fp, "bisa_keliru": every,
                         "keliru_per_jam": per_jam[name], "per_data": test_result[name]["metrics"]}
     passed = lolos_tinggi(result["sekarang"], result[chosen])
     installed_now = pasang(files[chosen], FALL_TINGGI, passed) if install else False
@@ -430,7 +434,7 @@ def jatuh(install: bool = False) -> int:
     print()
     for name in ("sekarang", chosen):
         r = result[name]
-        print(f"{name:9} tertangkap {r['tertangkap']}/{r['positif']}, keliru {r['keliru_klip']}/{r['negatif']}, "
+        print(f"{name:9} tertangkap {r['tertangkap']}/{r['positif']}, keliru {r['keliru_klip']}/{r['bisa_keliru']}, "
               f"keliru/jam {r['keliru_per_jam']}, sesi16 {report['sesi16_penyetelan'][name]}")
     print(("LOLOS" if passed else "TIDAK LOLOS") + f" (kandidat {chosen})" + (", dipasang" if installed_now else ""))
     return 0

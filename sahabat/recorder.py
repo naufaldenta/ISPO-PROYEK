@@ -51,12 +51,14 @@ class Recorder:
         self._segment_t0 = 0.0
         self._size: tuple[int, int] | None = None
         self._stopped_for_space = False
+        self.meta: dict | None = None
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
         except OSError:                      # folder hanya-baca: aplikasi tetap jalan, hanya tanpa rekaman
             print("Peringatan: rekaman uji tidak bisa disimpan; lanjut tanpa merekam.")
             return
         self.active = True
+        self.meta = dict(meta) if meta is not None else None
         if meta is not None:
             try:
                 (self.folder / META_FILE).write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
@@ -79,6 +81,16 @@ class Recorder:
             self._queue.put_nowait(("frame", t, frame))
         except queue.Full:
             self.dropped += 1
+
+    def perbarui_meta(self, **fields) -> None:
+        """Kamera atau posisi diganti selama merekam: meta.json mengikuti pilihan terbaru."""
+        if self.meta is None or not self.active:
+            return
+        self.meta.update(fields)
+        try:
+            (self.folder / META_FILE).write_text(json.dumps(self.meta, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
     def mark(self, t: float, label: str) -> bool:
         """Tanda adegan dari pencatat (misalnya "jatuh"). False bila tidak sedang merekam."""

@@ -147,6 +147,7 @@ class Engine:
                     self.fall = FallDetector(self.cfg, self._fall_model_path)
                     self.gestures.reset()
                     self.alarm.reset_input()
+                    self.asisten.reset()
                     self._step_times.clear()
                     self._frame = None
                     self._input_version = input_version

@@ -8,7 +8,8 @@
   const COLORS = { green: "#34c759", red: "#ff3b30", gray: "#a0a0a0", out: "#7d7d7d" };
   const TANDA = { benar: "Kejadian benar", keliru: "Alarm keliru", tindak: "Perlu tindak lanjut" };
   const KONKUREN = 4;
-  const AMBANG_KEKERASAN = 0.8;
+  const AMBANG_BAWAAN = 0.8;          // dipakai hanya bila server tidak mengirim ambang_kekerasan
+  let playTimer = null;
   const HITUNG = window.SahabatInspeksiHitung;
   const canvas = $("insp-canvas");
   const ctx = canvas.getContext("2d");
@@ -127,6 +128,7 @@
     playing = on && images.length > 0;
     $("insp-play").textContent = playing ? "❚❚ Jeda" : "▶ Putar";
     lastTs = null;
+    clearTimeout(playTimer);            // satu putaran saja, walau Putar ditekan berkali-kali
     if (playing) tick();
   }
 
@@ -141,7 +143,7 @@
     let i = index;
     while (i + 1 < info.waktu.length && info.waktu[i + 1] <= clock) i++;
     if (i !== index) { index = i; draw(); }
-    setTimeout(tick, 20);
+    playTimer = setTimeout(tick, 20);
   }
 
   function markers() {
@@ -155,7 +157,8 @@
       box.append(m);
     };
     const eventT = info.meta ? info.meta.kejadian_t : null;
-    const marks = HITUNG.markerPositions(info.waktu, eventT, info.overlay, AMBANG_KEKERASAN);
+    const ambang = typeof info.ambang_kekerasan === "number" ? info.ambang_kekerasan : AMBANG_BAWAAN;
+    const marks = HITUNG.markerPositions(info.waktu, eventT, info.overlay, ambang);
     marks.skor.forEach((pos) => put(pos, "skor", "Penilai di atas ambang"));
     if (marks.kejadian !== null) put(marks.kejadian, "kejadian", "Detik kejadian");
   }
@@ -203,6 +206,9 @@
     if (!response.ok || !result.ok) { say(result.error || "Klip belum bisa dimuat."); return; }
     info = result;
     item = result.kejadian || it;
+    // Daftar Riwayat dan judulnya mengikuti klip yang sedang dibuka (termasuk lewat "Kamera lain").
+    document.dispatchEvent(new CustomEvent("sahabat-insp-item", { detail: item }));
+    if (startAt !== undefined && typeof startAt === "object") startAt = clipTimeOf(startAt.wall);
     images = new Array(info.jumlah);
     let done = 0;
     let next = 0;
@@ -243,6 +249,17 @@
     }
   }
 
+  // Waktu dinding (detik epoch) <-> detik di dalam klip ini: kejadian terjadi pada item.waktu, yaitu detik
+  // meta.kejadian_t di klip. Klip lama tanpa meta memakai batas "sebelum" (before_s) yang dipakai saat merekam.
+  function eventOffset() {
+    const t = info.meta && typeof info.meta.kejadian_t === "number" ? info.meta.kejadian_t : null;
+    return t !== null ? t : (window.SahabatRiwayatSebelum || 0);
+  }
+
+  function wallTimeOf(clipT) { return (item.waktu || 0) - eventOffset() + clipT; }
+
+  function clipTimeOf(wall) { return Math.max(0, wall - (item.waktu || 0) + eventOffset()); }
+
   function renderOthers() {
     const box = $("insp-lain");
     box.textContent = "";
@@ -253,9 +270,8 @@
       const sign = other.selisih_s >= 0 ? "+" : "−";
       b.textContent = `${other.kamera_nama || "Kamera lain"} (${sign}${Math.abs(other.selisih_s).toFixed(1)} dtk)`;
       b.addEventListener("click", () => {
-        const here = info.waktu[index] || 0;
-        const target = here - other.selisih_s;
-        load({ id: other.id }, Math.max(0, target));
+        // Detik yang sama di dunia nyata, bukan detik yang sama di klip: klip lain bisa punya awal berbeda.
+        load({ id: other.id }, { wall: wallTimeOf(info.waktu[index] || 0) });
       });
       box.append(b);
     }
@@ -424,11 +440,17 @@
 
   document.addEventListener("keydown", (ev) => {
     if (!$("history-dialog").open || $("insp").hidden || !info) return;
-    if (ev.target && (ev.target.tagName === "TEXTAREA" || ev.target.tagName === "INPUT" && ev.target.type === "text")) return;
+    // Tombol, pilihan, penggeser, dan kotak teks memakai tombol keyboardnya sendiri (spasi menekan tombol yang
+    // sedang terfokus, panah menggeser penggeser); pemutar tidak boleh ikut menanggapinya.
+    const tag = ev.target && ev.target.tagName;
+    if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+    // Tombol terfokus (mis. sesudah menekan Jeda): spasi/Enter sudah menekan tombol itu sendiri, panah tetap
+    // melangkah per frame.
+    if (tag === "BUTTON" && (ev.code === "Space" || ev.code === "Enter")) return;
     if (ev.code === "ArrowLeft") { ev.preventDefault(); setPlaying(false); seek(index - 1); }
     else if (ev.code === "ArrowRight") { ev.preventDefault(); setPlaying(false); seek(index + 1); }
-    else if (ev.code === "Space") { ev.preventDefault(); $("insp-play").click(); }
-    else if (ev.code === "Home") { ev.preventDefault(); setPlaying(false); seek(0); }
+    else if (ev.code === "Space") { ev.preventDefault(); if (!ev.repeat) $("insp-play").click(); }
+    else if (ev.code === "Home") { ev.preventDefault(); if (!ev.repeat) { setPlaying(false); seek(0); } }
   });
 
   window.SahabatInspeksi = {
@@ -436,6 +458,7 @@
     close() {
       token++;
       setPlaying(false);
+      clearTimeout(playTimer);
       info = null;
       images = [];
       item = null;

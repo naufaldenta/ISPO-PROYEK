@@ -8,6 +8,7 @@ data/riwayat/klip/. Catatan dan klip dihapus otomatis setelah `keep_days` hari. 
 from __future__ import annotations
 
 import io
+import os
 import json
 import shutil
 import threading
@@ -58,6 +59,9 @@ class _Capture:
     event_t: float = 0.0
 
 
+REPLACE_TRIES = 10                # x 20 ms
+
+
 class Riwayat:
     accepts_overlay = True          # Engine mengirim frame asli + data kerangka (klip versi 2)
 
@@ -78,6 +82,7 @@ class Riwayat:
         self._rings: dict[str, deque[tuple[float, bytes, dict | None]]] = {}   # per kamera ("" = Mode Pameran)
         self._open: list[_Capture] = []
         self._writers: list[threading.Thread] = []
+        self._writing: set[str] = set()      # klip yang sudah selesai dikumpulkan tetapi zip-nya belum tertulis
         self._used_ids: set[str] = set()
         self.seq = 0                 # naik tiap kejadian baru; layar memakainya untuk angka di tombol Riwayat
         self.disabled = False
@@ -122,8 +127,7 @@ class Riwayat:
                 if t >= cap.end_t - 1e-6:
                     done.append(cap)
             for cap in done:
-                self._open.remove(cap)
-                self._finish(cap)
+                self._close_capture(cap)
 
     def event(self, t: float, jenis: str, mode: str, ids, sumber: str = "model", kamera: str = "",
               kamera_nama: str = "") -> Kejadian | None:
@@ -142,12 +146,20 @@ class Riwayat:
                 self._open.append(_Capture(record, t + self.after_s, frames, kamera, t))
             return record
 
+    def lupakan_kamera(self, kamera: str) -> None:
+        """Kamera dibuang dari Mode CCTV: cincin framenya dibuang, dan klip yang masih dikumpulkan disimpan sejauh
+        yang ada (frame berikutnya tidak akan datang)."""
+        with self._lock:
+            self._rings.pop(kamera, None)
+            pending = [c for c in self._open if c.kamera == kamera]
+            for cap in pending:
+                self._close_capture(cap)
+
     def close(self) -> None:
         """Aplikasi ditutup: klip yang belum lengkap disimpan sejauh yang ada."""
         with self._lock:
-            pending, self._open = self._open, []
-            for cap in pending:
-                self._finish(cap)
+            for cap in list(self._open):
+                self._close_capture(cap)
             writers = list(self._writers)
         for w in writers:
             w.join(timeout=10.0)
@@ -156,19 +168,25 @@ class Riwayat:
 
     def list(self, limit: int = MAX_LISTED, kamera: str | None = None) -> list[dict]:
         """Kejadian terbaru lebih dulu, bisa disaring per kamera. `klip` hanya benar bila berkasnya sudah tersimpan
-        dan masih ada."""
+        dan masih ada.
+
+        Tidak memegang kunci saat membaca log dan memeriksa berkas: kunci itu dipakai mesin tiap frame, jadi membuka
+        panel Riwayat tidak boleh menahan penilaian. Log hanya ditambah baris atau diganti utuh (atomik)."""
         if self.disabled:
             return []
-        with self._lock:
-            open_ids = {c.record.id for c in self._open}
-            out = []
-            records = [r for r in self._read_all() if kamera is None or r.kamera == kamera]
-            for rec in reversed(records[-limit:]):
-                item = asdict(rec)
-                item["klip"] = rec.klip and rec.id not in open_ids and self._clip_path(rec.id).is_file()
-                item["menyimpan"] = rec.id in open_ids
-                out.append(item)
-            return out
+        busy = self._busy_ids()
+        records = [r for r in self._read_all() if kamera is None or r.kamera == kamera]
+        return [self._item(rec, busy) for rec in reversed(records[-limit:])]
+
+    def _busy_ids(self) -> set[str]:
+        """Klip yang masih dikumpulkan atau sedang ditulis ke zip ("sedang disimpan")."""
+        return {c.record.id for c in list(self._open)} | set(self._writing)
+
+    def _item(self, rec: "Kejadian", busy: set[str]) -> dict:
+        item = asdict(rec)
+        item["klip"] = rec.klip and rec.id not in busy and self._clip_path(rec.id).is_file()
+        item["menyimpan"] = rec.klip and rec.id in busy
+        return item
 
     def set_tindak(self, record_id: str, tanda: str | None, catatan: str | None) -> dict | None:
         """Tanda tindak lanjut dan catatan guru. None = pertahankan yang lama, "" = hapus. None bila tidak ada."""
@@ -187,8 +205,8 @@ class Riwayat:
                 target.tanda = tanda
             if catatan is not None:
                 target.catatan = catatan.strip()
-            self._rewrite(records)
-        return next((i for i in self.list() if i["id"] == record_id), None)
+            self._rewrite(records, strict=True)        # gagal menyimpan = OSError, bukan diam-diam
+        return self._item(target, self._busy_ids())
 
     def ringkasan(self, kamera: str | None = None) -> dict:
         """Jumlah tanda tindak lanjut (dan jenis kejadian) atas semua catatan yang masih tersimpan."""
@@ -229,10 +247,11 @@ class Riwayat:
             return None
 
     def find(self, record_id: str) -> dict | None:
-        """Satu kejadian (bentuk list()) menurut ID, atau None."""
+        """Satu kejadian (bentuk list()) menurut ID, atau None. Tanpa kunci mesin (lihat list())."""
         if self.disabled or not _safe_id(record_id):
             return None
-        return next((i for i in self.list(limit=10 ** 6) if i["id"] == record_id), None)
+        rec = next((r for r in self._read_all() if r.id == record_id), None)
+        return self._item(rec, self._busy_ids()) if rec is not None else None
 
     def clip(self, record_id: str) -> list[tuple[float, bytes]] | None:
         """Frame klip (detik sejak frame pertama, JPEG). None bila tidak ada."""
@@ -296,14 +315,24 @@ class Riwayat:
         except OSError:
             pass
 
-    def _rewrite(self, records: list[Kejadian]) -> None:
+    def _rewrite(self, records: list[Kejadian], strict: bool = False) -> None:
         tmp = self._log_path().with_suffix(".tmp")
         try:
             tmp.write_text("".join(json.dumps(asdict(r), ensure_ascii=False) + "\n" for r in records),
                            encoding="utf-8")
-            tmp.replace(self._log_path())
+            # Windows menolak mengganti berkas yang sedang dibuka pembaca lain (panel Riwayat di layar lain):
+            # tunggu sebentar dan coba lagi.
+            for attempt in range(REPLACE_TRIES):
+                try:
+                    os.replace(tmp, self._log_path())
+                    break
+                except PermissionError:
+                    if attempt == REPLACE_TRIES - 1:
+                        raise
+                    time.sleep(0.02)
         except OSError:
-            pass
+            if strict:
+                raise
 
     def _read_all(self) -> list[Kejadian]:
         try:
@@ -326,9 +355,18 @@ class Riwayat:
             self._used_ids.add(r.id)
         return out
 
+    def _close_capture(self, cap: _Capture) -> None:
+        """Klip selesai dikumpulkan: tandai "sedang ditulis" SEBELUM keluar dari daftar terbuka, supaya pembaca tanpa
+        kunci tidak pernah melihatnya sebagai "tanpa klip"."""
+        if cap.frames:
+            self._writing.add(cap.record.id)
+        self._open.remove(cap)
+        self._finish(cap)
+
     def _finish(self, cap: _Capture) -> None:
         if not cap.frames:
             return
+        self._writing.add(cap.record.id)
         if self._background:
             w = threading.Thread(target=self._write_clip, args=(cap,), name="klip", daemon=True)
             self._writers = [x for x in self._writers if x.is_alive()] + [w]
@@ -337,6 +375,14 @@ class Riwayat:
             self._write_clip(cap)
 
     def _write_clip(self, cap: _Capture) -> None:
+        try:
+            self._write_clip_file(cap)
+        except Exception:                   # mis. memori habis saat menyusun zip: klip hilang, tetapi tidak
+            pass                            # "sedang disimpan" selamanya
+        finally:
+            self._writing.discard(cap.record.id)
+
+    def _write_clip_file(self, cap: _Capture) -> None:
         t0 = cap.frames[0][0]
         buf = io.BytesIO()
         overlays = [ov for _, _, ov in cap.frames]

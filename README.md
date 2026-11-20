@@ -140,8 +140,9 @@ beralarm, yang paling lama tampil lebih dulu; **Sudah diperiksa** memeriksa kame
 semuanya. Riwayat mencatat kamera tiap kejadian dan bisa disaring per kamera. Tandai **Prioritas** untuk kamera di
 tempat rawan (misalnya tangga): kamera itu didahulukan bila komputer kewalahan.
 
-Setiap kamera dinilai dengan model dan pelacak yang sama persis dengan Mode Pameran, jadi akurasi per kamera tidak
-berubah selama kamera itu dinilai penuh. Yang membatasi adalah tenaga komputer. Saat Mode CCTV dinyalakan, SAHABAT
+Di CPU, setiap kamera dinilai dengan model dan pelacak yang sama persis dengan Mode Pameran, jadi akurasi per kamera
+tidak berubah selama kamera itu dinilai penuh. Di GPU, model pose yang sama dijalankan lewat ONNX Runtime; hasilnya
+setara karena lolos uji kesetaraan (angka deteksi sama), bukan karena jalurnya identik. Yang membatasi adalah tenaga komputer. Saat Mode CCTV dinyalakan, SAHABAT
 mengukur komputernya dan menuliskan, misalnya, "CPU (OpenVINO): sanggup menilai 1 kamera penuh sekaligus". Laptop tanpa
 kartu grafis biasanya hanya sanggup menilai **satu** kamera penuh sekaligus. Beberapa kamera tetap bisa dipantau karena
 kamera kosong hampir tidak memakai tenaga, tetapi bila dua kamera ramai bersamaan, keduanya menjadi **lambat**. Untuk
@@ -158,10 +159,12 @@ lewat DirectML. Mode Pameran tidak berubah dan tetap memakai CPU. Pilihannya ada
 
 Pilihan berlaku saat Mode CCTV dinyalakan berikutnya. Laptop gaming sering punya dua kartu grafis (bawaan prosesor dan
 GPU gaming). SAHABAT mencoba keduanya dan memakai yang tercepat. Bila GPU bermasalah saat berjalan (driver, kabel eGPU
-dicabut, memori habis), Mode CCTV pindah ke CPU tanpa berhenti memantau dan menuliskan alasannya.
+dicabut, memori habis), Mode CCTV pindah ke CPU dan menuliskan alasannya. Saat pindah, penilaian berhenti beberapa
+detik selagi model CPU dimuat; alarm yang sudah menyala tetap menyala.
 
-Memasang paket GPU (sekali, sekitar 20 MB): saat penyalaan pertama SAHABAT menanyakannya bila ada kartu grafis, atau
-jalankan `scripts\siapkan_gpu.ps1`. Laptop pameran tanpa internet: jalankan skrip itu di rumah, lalu salin seluruh
+Memasang paket GPU (sekali, sekitar 20 MB): saat penyalaan pertama SAHABAT menanyakannya bila ada kartu grafis
+(tanpa jawaban dalam 20 detik dianggap "tidak", supaya persiapan tidak tertahan), atau jalankan
+`scripts\siapkan_gpu.ps1`. Laptop pameran tanpa internet: jalankan skrip itu di rumah, lalu salin seluruh
 folder SAHABAT lewat flashdisk.
 
 GPU mempercepat langkah pose saja. Penilaian jatuh dan kekerasan (ciri gerak dan model kecil) tetap berjalan di CPU,

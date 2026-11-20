@@ -445,3 +445,77 @@ def test_assistant_api_for_pameran_and_cctv_cameras(mode_env, tmp_path):        
     with TestClient(app, client=("192.168.1.50", 5000)) as p:                              # HP boleh membaca
         p.cookies.set(COOKIE, "ABCD2345")
         assert p.get("/api/asisten?kamera=k1").json()["saran"] == ["dari k1"]
+
+
+def test_requests_survive_cctv_switching_off_mid_request(tmp_path):                     # minor B2 #11
+    engine, runner = ModeEngine(), FakeRunner()
+    runner.active = True
+
+    class FlakyMode:
+        """Mode CCTV dimatikan tepat sesudah server memeriksanya."""
+        def __init__(self):
+            self.reads = 0
+
+        @property
+        def cctv(self):
+            self.reads += 1
+            return runner if self.reads == 1 else None
+
+        @property
+        def hidup(self):
+            return self.cctv is not None
+
+        def status(self):
+            return {"hidup": False}
+    app = create_app(engine, lan=FakeLan(), kamera=_store(tmp_path), mode=FlakyMode())
+    with TestClient(app) as c:
+        assert c.get("/video/gambar?kamera=k1").status_code in (200, 404)
+
+
+def test_compute_choice_is_redone_when_the_equivalence_result_changes(monkeypatch):     # minor B4 #10
+    from sahabat import perangkat_hitung as ph
+    clock = SimpleNamespace(t=0.0)
+    monkeypatch.setattr(ph, "_clock", lambda: clock.t)
+    cpu_pose = _Pose(60, clock, "CPU (OpenVINO)")
+    gpu = lambda device_id: _Pose(9, clock, f"GPU (DirectML #{device_id})")          # noqa: E731
+    cfg, cache, frame = Config(hitung="otomatis"), {}, np.zeros((8, 8, 3), np.uint8)
+    kw = dict(cpu_factory=lambda: cpu_pose, gpu_factory=gpu, save=lambda ms, i: None)
+    assert server.choose_compute(cfg, frame, cache, lolos=True, **kw).jenis == "gpu"
+    assert server.choose_compute(cfg, frame, cache, lolos=False, **kw).jenis == "cpu"
+
+
+def test_pameran_camera_reopens_only_when_its_stream_changes(tmp_path):                 # minor B5 #9
+    engine = ModeEngine()
+    engine.source.spec = "ipcam:k1"
+    reopened = []
+    engine.source.reopen = lambda: reopened.append(1)
+    store = _store(tmp_path)
+    app = create_app(engine, lan=FakeLan(), kamera=store, mode=ModeControl(engine, FakeRunner, lambda on: None))
+    form = {"id": "k1", "nama": "Kamera k1", "jenis": "alamat", "alamat": "rtsp://10.0.0.1/x", "pengguna": ""}
+    with TestClient(app) as c:
+        assert c.post("/api/kamera", json={**form, "posisi": "tinggi"}).json()["ok"]
+        assert reopened == []                                  # hanya posisi: tidak menyambung ulang
+        assert c.post("/api/kamera", json={**form, "posisi": "tinggi", "alamat": "rtsp://10.0.0.7/x"}).json()["ok"]
+        assert reopened == [1]
+
+
+def test_compute_info_shows_the_last_gpu_measurement(app_cctv, monkeypatch):           # minor B4 #11c
+    from sahabat import perangkat_hitung as ph
+    app, runner = app_cctv
+    monkeypatch.setattr(ph, "nama_gpu", lambda: [])
+    monkeypatch.setattr(ph, "dml_tersedia", lambda: True)
+    with TestClient(app) as c:
+        info = c.get("/api/cctv/hitung").json()
+    assert "terakhir" in info and set(info["terakhir"]) == {"ms", "gpu_id"}
+
+
+def test_recording_meta_follows_position_changes(mode_env, monkeypatch, tmp_path):     # minor B5 #6
+    mode, engine, runner = mode_env()
+    monkeypatch.setattr(server, "remember_posisi", lambda v: None)
+    updates = []
+    engine.recorder = SimpleNamespace(active=True, meta={"jenis": "biasa", "kamera": "0", "posisi": "dada"},
+                                      perbarui_meta=lambda **kw: updates.append(kw))
+    app = create_app(engine, lan=FakeLan(), kamera=_store(tmp_path), mode=mode)
+    with TestClient(app) as c:
+        c.post("/api/posisi", json={"posisi": "tinggi"})
+    assert updates and updates[-1]["posisi"] == "tinggi" and updates[-1]["jenis"] == "biasa"

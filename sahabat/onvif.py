@@ -11,6 +11,7 @@ import ipaddress
 import select
 import socket
 import time
+import http.client
 import urllib.error
 import urllib.request
 import uuid
@@ -155,6 +156,8 @@ def _call(url: str, body: str, pengguna: str, sandi: str, timeout_s: float) -> E
         raise OnvifError(MSG_UNSUPPORTED) from None
     except (urllib.error.URLError, OSError):
         raise OnvifError(MSG_SILENT) from None
+    except http.client.HTTPException:           # jawaban bukan HTTP yang benar (perangkat lain di port itu)
+        raise OnvifError(MSG_UNSUPPORTED) from None
     try:
         root = ET.fromstring(data)
     except ET.ParseError:
@@ -174,22 +177,35 @@ def _media_url(xaddr: str, pengguna: str, sandi: str, timeout_s: float) -> str:
     return xaddr
 
 
-def stream_uri(xaddr: str, pengguna: str, sandi: str, substream: bool = True, timeout_s: float = 5.0) -> str:
-    """Alamat RTSP kamera tanpa login (login disimpan terpisah di panel Kamera)."""
-    media = _media_url(xaddr, pengguna, sandi, timeout_s)
-    root = _call(media, '<GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/>', pengguna, sandi, timeout_s)
-    profiles = []
-    for prof in _find_all(root, "Profiles"):
+def pilih_profil(root, substream: bool = True, channel: int = 1) -> str:
+    """Token profil ONVIF: profil dikelompokkan per sumber video (channel NVR, urut seperti jawaban perangkat),
+    lalu dipilih yang terkecil (substream) atau terbesar dari channel itu. Profil tanpa ukuran hanya dipakai bila
+    channel itu tidak punya profil berukuran."""
+    sources: dict[str, list[tuple[int, int, str]]] = {}
+    for n, prof in enumerate(_find_all(root, "Profiles")):
         token = prof.get("token")
         if not token:
             continue
+        source = next((el.text.strip() for el in prof.iter() if _local(el.tag) == "SourceToken" and el.text), "")
         width = next((int(el.text) for el in prof.iter() if _local(el.tag) == "Width" and (el.text or "").isdigit()), 0)
         height = next((int(el.text) for el in prof.iter() if _local(el.tag) == "Height" and (el.text or "").isdigit()), 0)
-        profiles.append((width * height, token))
-    if not profiles:
+        sources.setdefault(source, []).append((width * height, n, token))
+    if not sources:
         raise OnvifError(MSG_UNSUPPORTED)
-    profiles.sort()
-    token = profiles[0][1] if substream else profiles[-1][1]
+    groups = list(sources.values())
+    if not 1 <= channel <= len(groups):
+        raise OnvifError(f"Channel {channel} tidak ada di perangkat ini (ada {len(groups)} channel).")
+    group = groups[channel - 1]
+    sized = sorted(p for p in group if p[0] > 0) or sorted(group, key=lambda p: p[1])
+    return sized[0][2] if substream else sized[-1][2]
+
+
+def stream_uri(xaddr: str, pengguna: str, sandi: str, substream: bool = True, timeout_s: float = 5.0,
+               channel: int = 1) -> str:
+    """Alamat RTSP kamera tanpa login (login disimpan terpisah di panel Kamera)."""
+    media = _media_url(xaddr, pengguna, sandi, timeout_s)
+    root = _call(media, '<GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/>', pengguna, sandi, timeout_s)
+    token = pilih_profil(root, substream, channel)
     root = _call(media, '<GetStreamUri xmlns="http://www.onvif.org/ver10/media/wsdl"><StreamSetup>'
                         '<Stream xmlns="http://www.onvif.org/ver10/schema">RTP-Unicast</Stream>'
                         '<Transport xmlns="http://www.onvif.org/ver10/schema"><Protocol>RTSP</Protocol></Transport>'

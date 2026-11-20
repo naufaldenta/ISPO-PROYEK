@@ -165,7 +165,8 @@ def fit_candidate(core, rows, name, weight=None):
             inferred = min(landing, landing_time(clip.trace, clip.onset))
             clip = replace(clip, labels=time_labels(clip.trace.t, clip.onset, inferred))
         clips.append(clip)
-    weight = weight or {"landing10": 10, "landing30": 30, "descent20": 20, "pose20": 20}[name]
+    if weight is None:
+        weight = {"landing10": 10, "landing30": 30, "descent20": 20, "pose20": 20}[name]
     extra = stack(clips, {"cauca": weight})
     x, y, w = (np.concatenate((a, b)) for a, b in zip(core, extra, strict=True))
     print(name, f"{len(y)} baris, CAUCA {len(extra[1])} dengan {int(extra[1].sum())} positif", flush=True)

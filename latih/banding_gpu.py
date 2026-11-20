@@ -31,11 +31,16 @@ OUT = Path(__file__).resolve().parent.parent / "docs" / "uji" / "banding-gpu"
 IMGSZ = 416                 # resolusi jejak CPU data uji
 
 
+LATENSI_TOLERANSI_S = 0.1     # satu penilaian (10 Hz): alarm jatuh GPU tidak boleh lebih lambat dari ini
+
+
 def lolos(cpu: dict, gpu: dict) -> bool:
-    """GPU tidak lebih buruk dari CPU di semua angka gerbang."""
+    """GPU tidak lebih buruk dari CPU di semua angka gerbang, termasuk waktu peringatan jatuh."""
     c, g = cpu["kekerasan_sesi17"], gpu["kekerasan_sesi17"]
+    lat_c, lat_g = cpu["jatuh"].get("latensi_median"), gpu["jatuh"].get("latensi_median")
+    late = lat_c is not None and (lat_g is None or lat_g > lat_c + LATENSI_TOLERANSI_S)
     return (gpu["jatuh"]["f1"] >= cpu["jatuh"]["f1"] and g["f1"] >= c["f1"] and g["tp"] >= c["tp"]
-            and g["alarm_keliru_per_jam"] <= c["alarm_keliru_per_jam"])
+            and g["alarm_keliru_per_jam"] <= c["alarm_keliru_per_jam"] and not late)
 
 
 def ringkas(cpu: dict, gpu: dict) -> str:

@@ -61,7 +61,7 @@ def test_search_and_onvif_endpoints(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "onvif_discover", lambda timeout_s=3.0: [{"host": "10.0.0.5", "xaddr": "x",
                                                                          "nama": "Lorong", "merek": "DS"}])
     calls = []
-    monkeypatch.setattr(server, "onvif_stream_uri", lambda xaddr, u, p, substream=True, timeout_s=5.0:
+    monkeypatch.setattr(server, "onvif_stream_uri", lambda xaddr, u, p, substream=True, timeout_s=5.0, channel=1:
                         calls.append((xaddr, u, p, substream)) or "rtsp://10.0.0.5:554/sub")
     with TestClient(create_app(StubEngine(), kamera=KameraStore(tmp_path / "k.json"))) as c:
         assert c.post("/api/kamera/cari", json={}).json() == {"ok": True, "ditemukan": [

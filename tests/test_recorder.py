@@ -106,3 +106,12 @@ def test_session_meta_names_the_cctv_camera(tmp_path, monkeypatch):             
     cfg = Config(camera="ipcam:k1", posisi_kamera="tinggi")
     assert server.session_meta(cfg, biasa=True) == {"jenis": "biasa", "kamera": "Kelas 7B", "posisi": "tinggi"}
     assert server.session_meta(Config(camera=0), biasa=False) == {"jenis": "adegan", "kamera": "0", "posisi": "dada"}
+
+
+def test_session_meta_can_be_updated_while_recording(tmp_path):                      # minor B5 #6
+    import json
+    rec = Recorder(tmp_path, name="sesi", start=False, meta={"jenis": "biasa", "kamera": "0", "posisi": "dada"})
+    rec.perbarui_meta(kamera="Kelas 7B", posisi="tinggi")
+    assert json.loads((tmp_path / "sesi" / "meta.json").read_text(encoding="utf-8")) == \
+        {"jenis": "biasa", "kamera": "Kelas 7B", "posisi": "tinggi"}
+    rec.close()

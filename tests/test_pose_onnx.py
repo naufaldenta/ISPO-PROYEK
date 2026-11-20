@@ -111,3 +111,14 @@ def test_real_model_runs_at_other_resolutions():
     for size in (320, 480):
         pose = OnnxPose(imgsz=size)
         assert pose.imgsz == size and pose.detect("k1", frame) == []
+
+
+@pytest.mark.skipif(not model_dir(416).exists(), reason="model OpenVINO belum ada")
+def test_track_thresholds_match_the_installed_ultralytics():                           # minor B4 #11e
+    """Penjaga: OnnxPose menyalin nilai NMS yang dipakai YOLO.track(); bila Ultralytics diperbarui dan nilainya
+    berubah, tes ini gagal sebelum jalur GPU diam-diam berbeda dari Mode Pameran."""
+    from sahabat.pose_onnx import MAX_DET, TRACK_CONF, TRACK_IOU
+    pose = YoloPose(416)
+    pose.detect(np.zeros((360, 640, 3), np.uint8))
+    args = pose._model.predictor.args
+    assert (args.conf, args.iou, args.max_det) == (TRACK_CONF, TRACK_IOU, MAX_DET)

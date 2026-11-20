@@ -22,6 +22,7 @@ from .penjadwal import GerakMurah, KamInfo, Penjadwal
 RED = ("jatuh", "kekerasan")
 SLOW_SUFFIX = " (dinilai lambat)"
 LOST_STEP_S = 0.5           # kamera terputus: mesin diberi tahu sesering ini (pita "kamera terputus")
+OVERDUE_WAIT_S = 0.02      # kamera jatuh tempo tanpa gambar baru: periksa lagi 50x per detik, bukan 200x
 FALLBACK_RETRY_S = 2.0      # CPU cadangan gagal dimuat: coba lagi sesudah selang ini (bukan berputar terus)
 MEASURE_ID = "__ukur__"
 SMALL_WIDTH, SMALL_QUALITY = 480, 60
@@ -83,6 +84,10 @@ class CctvRunner:
         self.penjadwal = Penjadwal(cfg.rate_hz, cfg.cctv_safety_s, cfg.fps_floor, cfg.cctv_motion_hz)
         self._cams: dict[str, _Cam] = {}
         self._lock = threading.RLock()
+        self._step_lock = threading.Lock()          # dipegang pekerja selama satu kamera dinilai (pose + mesin)
+        self._reload_lock = threading.Lock()        # reload() berurutan; layar tetap memakai _lock yang singkat
+        self._stopped = False
+        self._alarm_lock = threading.Lock()         # jam mulai alarm ditulis pekerja dan dibaca layar
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_report: dict[str, float] = {}
@@ -99,7 +104,6 @@ class CctvRunner:
         from .config import DATA_DIR
         from .engine import Engine
         from .predlog import PredLog
-        from .server import FALL_MODEL, VIOLENCE_MODEL
         from .profil_kamera import model_untuk
         models = model_untuk(cam.get("posisi"))
         engine = Engine(self.cfg, source, pose, PredLog(DATA_DIR / "log", prefix="cctv-" + cam["id"]), False,
@@ -118,18 +122,33 @@ class CctvRunner:
         return _Cam(cam["id"], cam["nama"], bool(cam.get("prioritas")), cam.get("zona"), _signature(cam), source,
                     engine, pose, posisi=posisi, peringatan=model_untuk(posisi).peringatan)
 
-    def _release(self, cam: _Cam) -> None:
-        try:
-            cam.source.stop()
-        finally:
-            log = getattr(cam.engine, "log", None)
-            if log is not None:
-                log.close()                     # Riwayat bersama tidak ditutup di sini
-            if self.shared_pose is not None:            # None: perangkat hitung belum dipilih
-                self.shared_pose.forget(cam.id)
+    def _release(self, cam: _Cam, forget: bool = True) -> None:
+        """Melepas kamera yang dibuang. Menunggu penilaian yang sedang berjalan selesai (paling lama satu kamera),
+        supaya sumber tidak dihentikan di tengah penilaian dan pelacaknya tidak dibuat ulang sesudah dilupakan.
+        forget=False: kamera duplikat yang tidak pernah dipakai; pelacak dan Riwayat ber-ID sama milik kamera hidup."""
+        with self._step_lock:
+            try:
+                cam.source.stop()
+            finally:
+                if forget and self._cams.get(cam.id) is None:
+                    self._forget(cam)
+                else:
+                    log = getattr(cam.engine, "log", None)
+                    if log is not None:
+                        log.close()
+
+    def _forget(self, cam: _Cam) -> None:
+        log = getattr(cam.engine, "log", None)
+        if log is not None:
+            log.close()                         # Riwayat bersama tidak ditutup di sini
+        if self.shared_pose is not None:                # None: perangkat hitung belum dipilih
+            self.shared_pose.forget(cam.id)
+        if self.riwayat is not None and hasattr(self.riwayat, "lupakan_kamera"):
+            self.riwayat.lupakan_kamera(cam.id)
 
     # ---- menyalakan / mematikan ---------------------------------------------------------
     def start(self) -> dict:
+        self._stopped = False
         cams = self.store.active()
         if not cams:
             raise CctvError("Tidak ada kamera CCTV aktif. Tambahkan atau aktifkan kamera di panel Kamera.")
@@ -172,17 +191,30 @@ class CctvRunner:
                 times.append(self._clock() - t0)
         finally:
             self.shared_pose.forget(MEASURE_ID)
-        median = statistics.median(times)
-        return int(pipeline_fps(1.0 / median) // self.cfg.rate_hz) if median > 0 else 0
+        from .perangkat_hitung import kapasitas
+        return kapasitas(statistics.median(times), self.cfg.rate_hz)
 
     def _release_all(self) -> None:
+        """Semua kamera dilepas bersamaan: menghentikan stream yang macet bisa makan beberapa detik per kamera."""
         with self._lock:
             cams, self._cams = list(self._cams.values()), {}
+
+        def stop(cam):
+            try:
+                cam.source.stop()
+            except Exception:
+                self._report("melepas kamera " + cam.nama)
+        threads = [threading.Thread(target=stop, args=(cam,), name="lepas-kamera", daemon=True) for cam in cams]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
         for cam in cams:
-            self._release(cam)
+            self._forget(cam)
 
     def stop(self) -> None:
         self.active = False
+        self._stopped = True                    # reload() yang sedang membangun tidak menghidupkan kamera lagi
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=10.0)
@@ -190,17 +222,42 @@ class CctvRunner:
         self._release_all()
 
     def reload(self) -> None:
-        """Daftar kamera berubah di panel Kamera: tambah, buang, perbarui, atau buka ulang sumber."""
+        """Daftar kamera berubah di panel Kamera: tambah, buang, perbarui, atau buka ulang sumber.
+
+        Kamera baru dan model posisi dimuat di luar kunci runner (memuat model makan waktu, dan kunci itu dipakai
+        layar tiap 0,2 dtk); kunci hanya dipegang saat menukar isi daftar."""
+        with self._reload_lock:
+            self._reload()
+
+    def _reload(self) -> None:
         from .profil_kamera import model_untuk, posisi_bersih
         wanted = {c["id"]: c for c in self.store.active()}
         with self._lock:
+            current = dict(self._cams)
+        built = {cid: self._build(info) for cid, info in wanted.items() if cid not in current}
+        for cid, info in wanted.items():
+            cam = current.get(cid)
+            posisi = posisi_bersih(info.get("posisi"))
+            if cam is not None and posisi != cam.posisi:
+                models = model_untuk(posisi)
+                swap = getattr(cam.engine, "ganti_model", None)
+                if swap is not None:
+                    swap(models.violence, models.fall)
+                cam.posisi, cam.peringatan = posisi, models.peringatan
+        extra = []
+        with self._lock:
+            if self._stopped:
+                # Mode CCTV dimatikan selagi kamera baru dibangun: jangan hidupkan lagi daftar yang sudah dilepas.
+                extra, built, wanted = list(built.values()), {}, {}
             removed = [cam for cid, cam in self._cams.items() if cid not in wanted]
-            for cam in removed:
-                del self._cams[cam.id]
+            for cid, cam in built.items():
+                if cid in self._cams:
+                    extra.append(cam)           # sudah ada (tidak terjadi lagi berkat _reload_lock, tetapi aman)
+                else:
+                    self._cams[cid] = cam
             for cid, info in wanted.items():
                 cam = self._cams.get(cid)
-                if cam is None:
-                    self._cams[cid] = self._build(info)
+                if cam is None or (cid in built and built[cid] is cam):
                     continue
                 cam.nama, cam.prioritas = info["nama"], bool(info.get("prioritas"))
                 if hasattr(cam.engine, "kamera"):
@@ -208,21 +265,16 @@ class CctvRunner:
                 if info.get("zona") != cam.zona:
                     cam.zona = info.get("zona")
                     cam.engine.set_zone(cam.zona)
-                posisi = posisi_bersih(info.get("posisi"))
-                if posisi != cam.posisi:
-                    models = model_untuk(posisi)
-                    swap = getattr(cam.engine, "ganti_model", None)
-                    if swap is not None:
-                        swap(models.violence, models.fall)
-                    cam.posisi, cam.peringatan = posisi, models.peringatan
                 signature = _signature(info)
                 if signature != cam.signature:
                     cam.signature = signature
                     cam.source.reopen()
             # urutan layar mengikuti urutan daftar kamera
-            self._cams = {cid: self._cams[cid] for cid in wanted}
+            self._cams = {cid: self._cams[cid] for cid in wanted if cid in self._cams}
         for cam in removed:
             self._release(cam)
+        for cam in extra:
+            self._release(cam, forget=False)
 
     @staticmethod
     def _short(exc: Exception) -> str:
@@ -251,7 +303,8 @@ class CctvRunner:
         old = self.shared_pose
         with self._lock:
             cams = list(self._cams.values())
-            self.shared_pose, self.perangkat, self.pesan_perangkat = new, "CPU", ""
+            self.shared_pose, self.pesan_perangkat = new, ""
+            self.perangkat = getattr(new, "nama", None) or "CPU (OpenVINO)"
             for cam in cams:
                 if cam.pose is not None:
                     cam.pose.shared = new
@@ -313,19 +366,26 @@ class CctvRunner:
             version, (frame_t, frame) = packets[cid]
             if frame_t == cam.last_frame_t:
                 continue                                    # belum ada gambar baru dari kamera ini
-            # Pose GPU dihitung di sini, bukan di dalam mesin, supaya galatnya memindahkan Mode CCTV ke CPU (mesin
-            # menelan galat pose). Frame pertama sesudah sumber dibuka ulang dibiarkan ke mesin: mesin me-reset
-            # pelacak dulu, baru menilai.
-            if hasattr(self.shared_pose, "detect_many") and cam.pose is not None and version == cam.seen_version:
-                try:
-                    people = self.shared_pose.detect(cam.id, frame)
-                except Exception as exc:
-                    return 0.0 if self._fall_back(exc, frame) else FALLBACK_RETRY_S
-                cam.pose.prefetch(frame, people)
-            cam.seen_version = version
-            cam.last_frame_t, cam.last_step, cam.motion = frame_t, now, False
-            cam.step_times.append(now)
-            self._step(cam, frame_t, frame, version)
+            with self._step_lock:
+                if self._cams.get(cam.id) is not cam:
+                    continue                                # dibuang (atau diganti) reload() tepat sebelum dinilai
+                # Pose GPU dihitung di sini, bukan di dalam mesin, supaya galatnya memindahkan Mode CCTV ke CPU (mesin
+                # menelan galat pose). Frame pertama sesudah sumber dibuka ulang dibiarkan ke mesin: mesin me-reset
+                # pelacak dulu, baru menilai.
+                if hasattr(self.shared_pose, "detect_many") and cam.pose is not None and version == cam.seen_version:
+                    try:
+                        people = self.shared_pose.detect(cam.id, frame)
+                    except Exception as exc:
+                        failed = exc
+                    else:
+                        failed = None
+                        cam.pose.prefetch(frame, people)
+                    if failed is not None:
+                        return 0.0 if self._fall_back(failed, frame) else FALLBACK_RETRY_S
+                cam.seen_version = version
+                cam.last_frame_t, cam.last_step, cam.motion = frame_t, now, False
+                cam.step_times.append(now)
+                self._step(cam, frame_t, frame, version)
             cam.people_last = cam.engine.snapshot().people > 0
             if cam.people_last:
                 cam.person_t = now
@@ -335,16 +395,24 @@ class CctvRunner:
             self._track_alarm(cam, now)
         waits = [cam.last_step + 1.0 / self.cfg.rate_hz - self._clock() for cam in cams
                  if cam.connected and self._is_full(cam, now)]
-        return min(0.05, max(0.005, min(waits))) if waits else 0.05
+        if not waits:
+            return 0.05
+        soonest = min(waits)
+        # Sudah jatuh tempo tetapi belum ada gambar baru (kamera macet atau lebih lambat dari 10 fps): tunggu sebentar,
+        # jangan berputar ratusan kali per detik.
+        return OVERDUE_WAIT_S if soonest <= 0 else min(0.05, max(0.005, soonest))
 
-    def _track_alarm(self, cam: _Cam, now: float) -> bool:
-        """Mencatat kapan alarm kamera ini mulai (untuk urutan "terlama dulu" dan jam di pita)."""
-        red = cam.engine.snapshot().bar in RED
-        if red and cam.alarm_mono is None:
-            cam.alarm_mono, cam.alarm_wall = now, self._wall()
-        elif not red:
-            cam.alarm_mono = cam.alarm_wall = None
-        return red
+    def _track_alarm(self, cam: _Cam, now: float, bar: str | None = None) -> tuple[float, float] | None:
+        """Mencatat kapan alarm kamera ini mulai (untuk urutan "terlama dulu" dan jam di pita). Mengembalikan
+        (mulai monotonic, mulai jam dinding) yang dibaca sekaligus, atau None bila tidak ada alarm. `bar`: pita dari
+        snapshot yang sudah dibaca pemanggil, supaya pita dan status alarm berasal dari saat yang sama."""
+        red = (cam.engine.snapshot().bar if bar is None else bar) in RED
+        with self._alarm_lock:
+            if red and cam.alarm_mono is None:
+                cam.alarm_mono, cam.alarm_wall = now, self._wall()
+            elif not red:
+                cam.alarm_mono = cam.alarm_wall = None
+            return (cam.alarm_mono, cam.alarm_wall) if red and cam.alarm_mono is not None else None
 
     def _step(self, cam: _Cam, t: float, frame, version) -> None:
         try:
@@ -386,8 +454,9 @@ class CctvRunner:
             snap = cam.engine.snapshot()
             status = self.penjadwal.status(self._info(cam, now), now)
             rate = self._rate(cam, now) if cam.connected else 0.0
-            if self._track_alarm(cam, now):
-                alarms.append(cam)
+            started = self._track_alarm(cam, now, snap.bar)
+            if started is not None:
+                alarms.append((started, cam, snap))
             seq += snap.alarm_seq
             people += snap.people
             if status in ("penuh", "lambat"):
@@ -396,12 +465,12 @@ class CctvRunner:
                          "people": snap.people, "status": status, "prioritas": cam.prioritas, "zona": cam.zona,
                          "posisi": cam.posisi, "peringatan": cam.peringatan,
                          "galat": getattr(cam.source, "error", "")})
-        alarms.sort(key=lambda c: c.alarm_mono)
+        alarms.sort(key=lambda a: a[0][0])         # jam yang dibaca saat itu, bukan atribut yang bisa berubah
         status_of = {r["id"]: r["status"] for r in rows}
         if alarms:
-            first = alarms[0]
-            bar = first.engine.snapshot().bar
-            stamp = time.strftime("%H.%M.%S", time.localtime(first.alarm_wall))
+            (_, first_wall), first, first_snap = alarms[0]
+            bar = first_snap.bar
+            stamp = time.strftime("%H.%M.%S", time.localtime(first_wall))
             text = f"{BAR_TEXT[bar]} — {first.nama} — {stamp}"
             if status_of.get(first.id) == "lambat":
                 text += SLOW_SUFFIX
@@ -410,8 +479,8 @@ class CctvRunner:
         else:
             bar, text = "aman", BAR_TEXT["aman"]
         return {"aktif": self.active, "bar": bar, "text": text, "fps": round(statistics.mean(fps), 1) if fps else 0.0,
-                "people": people, "alarm_seq": seq, "alarm_kamera": alarms[0].id if alarms else None,
-                "alarm_list": [c.id for c in alarms], "kapasitas": self.kapasitas, "perangkat": self.perangkat,
+                "people": people, "alarm_seq": seq, "alarm_kamera": alarms[0][1].id if alarms else None,
+                "alarm_list": [c.id for _, c, _ in alarms], "kapasitas": self.kapasitas, "perangkat": self.perangkat,
                 "galat_gpu": self.galat_gpu, "pesan_perangkat": self.pesan_perangkat,
                 "lambat": any(r["status"] == "lambat" for r in rows), "kamera": rows}
 

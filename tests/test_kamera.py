@@ -185,3 +185,82 @@ def test_flags_unknown_camera(tmp_path):
         store(tmp_path).set_flags("tidakada", aktif=True)
     with pytest.raises(ValueError):
         store(tmp_path).set_zone("tidakada", None)
+
+
+# ---- temuan minor (Bagian 1) ----
+def test_entries_missing_fields_are_repaired_not_500(tmp_path):                      # minor B1 #9
+    import json
+    (tmp_path / "kamera.json").write_text(json.dumps({"kamera": [
+        {"id": "k1", "jenis": "alamat", "alamat": "rtsp://10.0.0.1/x"},
+        {"id": "k2", "jenis": "merek", "nama": 5}]}), encoding="utf-8")
+    s = KameraStore(tmp_path / "kamera.json")
+    items = {it["id"]: it for it in s.list_public()}
+    assert items["k1"]["nama"] == "Kamera k1" and items["k1"]["aktif"] is True
+    assert items["k2"]["nama"] == "Kamera k2"
+
+
+def test_unreadable_file_is_never_overwritten(tmp_path, monkeypatch):                # minor B1 #9
+    import pathlib
+    path = tmp_path / "kamera.json"
+    path.write_text('{"kamera": []}', encoding="utf-8")
+    real = pathlib.Path.read_text
+
+    def denied(self, *a, **k):
+        if self == path:
+            raise PermissionError("akses ditolak")
+        return real(self, *a, **k)
+    monkeypatch.setattr(pathlib.Path, "read_text", denied)
+    s = KameraStore(path)
+    import pytest as _pytest
+    with _pytest.raises(OSError):
+        s.save({"nama": "Baru", "jenis": "alamat", "alamat": "rtsp://10.0.0.2/x"})
+    assert not path.with_suffix(".rusak.json").exists() and real(path, encoding="utf-8") == '{"kamera": []}'
+
+
+def test_failed_write_leaves_the_list_unchanged(tmp_path, monkeypatch):              # minor B1 #15
+    s = KameraStore(tmp_path / "kamera.json")
+    s.save({"nama": "Lama", "jenis": "alamat", "alamat": "rtsp://10.0.0.1/x"})
+    before = s.list_public()
+    monkeypatch.setattr(s, "_write", lambda: (_ for _ in ()).throw(OSError("disk penuh")))
+    import pytest as _pytest
+    for call in (lambda: s.save({"nama": "Baru", "jenis": "alamat", "alamat": "rtsp://10.0.0.2/x"}),
+                 lambda: s.set_flags(before[0]["id"], aktif=False),
+                 lambda: s.set_zone(before[0]["id"], [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5]]),
+                 lambda: s.delete(before[0]["id"])):
+        with _pytest.raises(OSError):
+            call()
+        assert s.list_public() == before
+
+
+# ---- perbaikan review akhir batch minor ----
+def test_repair_keeps_numbers_written_as_text(tmp_path):                               # review M-4
+    import json
+    (tmp_path / "kamera.json").write_text(json.dumps({"kamera": [
+        {"id": "k1", "nama": "NVR", "jenis": "merek", "merek": "hikvision", "host": "10.0.0.5", "port": "8554",
+         "channel": "2", "substream": True, "pengguna": "", "sandi": ""},
+        {"id": "k2", "nama": "Kamera", "jenis": "merek", "merek": "hikvision", "host": "10.0.0.6", "pengguna": "",
+         "sandi": ""}]}), encoding="utf-8")
+    s = KameraStore(tmp_path / "kamera.json")
+    items = {it["id"]: it for it in s.list_public()}
+    assert (items["k1"]["port"], items["k1"]["channel"]) == (8554, 2)
+    assert items["k2"]["port"] == 554                          # port bawaan merek, bukan 0
+
+
+def test_file_that_becomes_readable_again_is_used(tmp_path, monkeypatch):              # review M-5
+    import json
+    import pathlib
+    path = tmp_path / "kamera.json"
+    path.write_text(json.dumps({"kamera": [{"id": "k1", "nama": "Lorong", "jenis": "alamat",
+                                            "alamat": "rtsp://10.0.0.1/x", "pengguna": "", "sandi": ""}]}),
+                    encoding="utf-8")
+    real, locked = pathlib.Path.read_text, [True]
+
+    def maybe_locked(self, *a, **k):
+        if self == path and locked[0]:
+            raise PermissionError("dikunci antivirus")
+        return real(self, *a, **k)
+    monkeypatch.setattr(pathlib.Path, "read_text", maybe_locked)
+    s = KameraStore(path)
+    assert s.list_public() == []
+    locked[0] = False                                          # kuncinya lepas beberapa saat kemudian
+    assert [it["id"] for it in s.list_public()] == ["k1"]

@@ -56,3 +56,43 @@ def test_onvif_ignores_system_proxy(fake_onvif_server, monkeypatch):   # Final #
     monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
     monkeypatch.setattr(urllib.request, "_opener", None)          # opener global dibuat ulang dengan proxy tiruan
     assert stream_uri(fake_onvif_server.xaddr, "admin", "x").endswith("/sub")
+
+
+# ---- temuan minor (Bagian 1) ----
+_NVR = ('<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
+        'xmlns:tt="http://www.onvif.org/ver10/schema" xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><s:Body>'
+        '<trt:GetProfilesResponse>'
+        '<trt:Profiles token="tanpa_ukuran"><tt:VideoSourceConfiguration><tt:SourceToken>VS1</tt:SourceToken>'
+        '</tt:VideoSourceConfiguration></trt:Profiles>'
+        '<trt:Profiles token="ch1_utama"><tt:VideoSourceConfiguration><tt:SourceToken>VS1</tt:SourceToken>'
+        '</tt:VideoSourceConfiguration><tt:VideoEncoderConfiguration><tt:Resolution><tt:Width>1920</tt:Width>'
+        '<tt:Height>1080</tt:Height></tt:Resolution></tt:VideoEncoderConfiguration></trt:Profiles>'
+        '<trt:Profiles token="ch2_kecil"><tt:VideoSourceConfiguration><tt:SourceToken>VS2</tt:SourceToken>'
+        '</tt:VideoSourceConfiguration><tt:VideoEncoderConfiguration><tt:Resolution><tt:Width>320</tt:Width>'
+        '<tt:Height>180</tt:Height></tt:Resolution></tt:VideoEncoderConfiguration></trt:Profiles>'
+        '<trt:Profiles token="ch1_sub"><tt:VideoSourceConfiguration><tt:SourceToken>VS1</tt:SourceToken>'
+        '</tt:VideoSourceConfiguration><tt:VideoEncoderConfiguration><tt:Resolution><tt:Width>640</tt:Width>'
+        '<tt:Height>360</tt:Height></tt:Resolution></tt:VideoEncoderConfiguration></trt:Profiles>'
+        '</trt:GetProfilesResponse></s:Body></s:Envelope>')
+
+
+def test_profile_choice_skips_unknown_size_and_stays_on_one_channel():               # minor B1 #14
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(_NVR)
+    assert onvif.pilih_profil(root, substream=True) == "ch1_sub"
+    assert onvif.pilih_profil(root, substream=False) == "ch1_utama"
+    assert onvif.pilih_profil(root, substream=True, channel=2) == "ch2_kecil"
+
+
+def test_http_protocol_errors_are_friendly(monkeypatch):                             # minor B1 #10
+    import http.client
+    monkeypatch.setattr(onvif._NO_PROXY, "open",
+                        lambda *a, **k: (_ for _ in ()).throw(http.client.BadStatusLine("sampah")))
+    with pytest.raises(onvif.OnvifError):
+        onvif.stream_uri("http://10.0.0.1/onvif/device_service", "admin", "x")
+
+
+def test_channel_that_does_not_exist_is_an_error():                                  # review M-8
+    import xml.etree.ElementTree as ET
+    with pytest.raises(onvif.OnvifError):
+        onvif.pilih_profil(ET.fromstring(_NVR), substream=True, channel=5)

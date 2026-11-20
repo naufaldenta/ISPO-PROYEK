@@ -415,7 +415,7 @@ def test_cpu_fallback_that_fails_to_load_is_retried_without_spinning(fake_clock_
     wait = runner._cycle(runner._clock())
     assert wait >= 1.0 and "CPU belum bisa dimuat" in runner.snapshot()["galat_gpu"]
     runner.run_for(3.0)
-    assert len(calls) == 2 and runner.snapshot()["perangkat"] == "CPU"
+    assert len(calls) == 2 and runner.snapshot()["perangkat"] == "CPU (OpenVINO)"
 
 
 def test_gpu_error_falls_back_to_cpu_and_keeps_watching(fake_clock_runner):            # Review Focus 2
@@ -425,7 +425,7 @@ def test_gpu_error_falls_back_to_cpu_and_keeps_watching(fake_clock_runner):     
     before = len(engines["k1"].steps)
     runner.run_for(1.0)
     s = runner.snapshot()
-    assert s["perangkat"] == "CPU" and s["galat_gpu"].startswith("GPU bermasalah (DXGI_ERROR_DEVICE_REMOVED")
+    assert s["perangkat"] == "CPU (OpenVINO)" and s["galat_gpu"].startswith("GPU bermasalah (DXGI_ERROR_DEVICE_REMOVED")
     assert s["galat_gpu"].endswith("Mode CCTV pindah ke CPU.")
     assert s["pesan_perangkat"] == ""                    # peringatan GPU lama tidak berlaku lagi
     assert len(engines["k1"].steps) - before >= 8 and len(runner.cpu_poses) == 1
@@ -437,7 +437,7 @@ def test_gpu_error_while_measuring_at_start_falls_back(fake_clock_runner):
     runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True, start=False)
     runner.shared_pose.fail = RuntimeError("E_OUTOFMEMORY")
     s = runner.start()
-    assert s["perangkat"] == "CPU" and "E_OUTOFMEMORY" in s["galat_gpu"] and len(runner.cpu_poses) == 1
+    assert s["perangkat"] == "CPU (OpenVINO)" and "E_OUTOFMEMORY" in s["galat_gpu"] and len(runner.cpu_poses) == 1
 
 
 def test_without_fallback_gpu_error_is_reported_not_fatal(fake_clock_runner):
@@ -463,3 +463,153 @@ def test_reload_swaps_models_when_position_changes(fake_clock_runner, monkeypatc
     assert row["posisi"] == "tinggi" and row["peringatan"] == profil_kamera.PERINGATAN
     runner.reload()
     assert len(swaps) == 1                                                  # posisi sama: tidak ditukar lagi
+
+
+# ---- temuan minor (Bagian 2 dan 4) ----
+def test_snapshot_survives_alarm_cleared_by_worker(fake_clock_runner):                 # minor B2 #8
+    runner, engines = fake_clock_runner(["k1", "k2"])
+    engines["k1"].raise_alarm("jatuh")
+    engines["k2"].raise_alarm("kekerasan")
+    runner.run_for(0.2)
+    original = engines["k2"].snapshot
+    k1 = runner._cams["k1"]
+
+    def worker_clears_k1():                    # pekerja (utas lain) memeriksa alarm k1 di tengah snapshot()
+        k1.alarm_mono = k1.alarm_wall = None
+        return original()
+    engines["k2"].snapshot = worker_clears_k1
+    s = runner.snapshot()                       # dulu: TypeError saat mengurutkan None dengan angka
+    assert s["alarm_list"] and s["bar"] in ("jatuh", "kekerasan")
+
+
+def test_removed_camera_is_released_after_its_step(fake_clock_runner):                 # minor B2 #10, B4 #9
+    import threading
+    runner, engines = fake_clock_runner(["k1", "k2"])
+    runner.run_for(0.2)
+    src = runner.sources["k2"]
+    runner.store.set_flags("k2", aktif=False)
+    with runner._step_lock:                     # pekerja sedang menilai k2
+        t = threading.Thread(target=runner.reload)
+        t.start()
+        t.join(0.3)
+        assert not src.stopped                  # belum dilepas selama penilaiannya berjalan
+    t.join(5)
+    assert src.stopped and "k2" in runner.shared_pose.forgotten
+
+
+def test_reload_builds_new_cameras_outside_the_runner_lock(fake_clock_runner):          # minor B2 #9, B5 #8
+    runner, engines = fake_clock_runner(["k1"])
+    held = []
+    make = runner._source_factory
+
+    def factory(cam):
+        held.append(runner._lock._is_owned())
+        return make(cam)
+    runner._source_factory = factory
+    item = {"nama": "Baru", "jenis": "alamat", "alamat": "rtsp://10.0.0.9/x"}
+    runner.store.save(item)
+    runner.reload()
+    assert held == [False]
+
+
+def test_stop_releases_sources_in_parallel(fake_clock_runner):                         # minor B2 #12
+    import time as _time
+    runner, engines = fake_clock_runner(["k1", "k2", "k3", "k4"])
+    for src in runner.sources.values():
+        src.stop = (lambda s: lambda: (_time.sleep(0.3), setattr(s, "stopped", True)))(src)
+    t0 = _time.perf_counter()
+    runner.stop()
+    assert _time.perf_counter() - t0 < 0.9 and all(s.stopped for s in runner.sources.values())
+
+
+def test_worker_does_not_spin_without_new_frames(fake_clock_runner):                   # minor B2 #13
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1})
+    runner.run_for(0.5)
+    src = runner.sources["k1"]
+    frozen = (src.clock.now, src._frame())
+    src.packet = lambda: (src.version, frozen)           # kamera macet: gambar yang sama terus
+    cycles = []
+    original = runner._cycle
+    runner._cycle = lambda now: cycles.append(now) or original(now)
+    runner.run_for(1.0)
+    assert len(cycles) <= 60
+
+
+def test_fallback_names_the_cpu_device_and_capacity_uses_one_formula(fake_clock_runner):   # minor B4 #11c
+    from sahabat import perangkat_hitung as ph
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True)
+    runner.cpu_poses_named = True
+    runner._cpu_fallback = (lambda make: lambda: setattr(p := make(), "nama", "CPU (OpenVINO)") or p)(runner._cpu_fallback)
+    runner.shared_pose.fail = RuntimeError("DXGI_ERROR_DEVICE_REMOVED")
+    runner.run_for(0.5)
+    assert runner.snapshot()["perangkat"] == "CPU (OpenVINO)"
+    assert runner.kapasitas == ph.kapasitas(runner.shared_pose.cost)
+
+
+# ---- perbaikan review akhir batch minor ----
+def test_concurrent_reloads_keep_the_list_right(fake_clock_runner):                    # review I-1
+    import threading
+    runner, engines = fake_clock_runner(["k1", "k3"])
+    gate, building = threading.Event(), threading.Event()
+    make = runner._source_factory
+
+    def slow_factory(cam):
+        if cam["nama"] == "Baru A" and not building.is_set():     # hanya pembangunan R1 yang lambat
+            building.set()
+            gate.wait(5)
+        return make(cam)
+    runner._source_factory = slow_factory
+    errors = []
+
+    def run(fn):
+        try:
+            fn()
+        except Exception as e:                  # noqa: BLE001
+            errors.append(e)
+    runner.store.save({"nama": "Baru A", "jenis": "alamat", "alamat": "rtsp://10.0.0.9/x"})
+    r1 = threading.Thread(target=run, args=(runner.reload,))
+    r1.start()
+    building.wait(5)                            # R1 sedang membangun kamera baru (lambat)
+    runner.store.set_flags("k3", aktif=False)
+    r2 = threading.Thread(target=run, args=(runner.reload,))
+    r2.start()
+    r2.join(1.0)                                # R2 (cepat) sempat jalan dulu bila tidak ditahan
+    gate.set()
+    r1.join(5)
+    r2.join(5)
+    assert errors == []
+    assert set(runner._cams) == {c["id"] for c in runner.store.active()}
+
+
+def test_reload_racing_stop_leaves_no_camera_open(fake_clock_runner):                  # review I-1
+    import threading
+    runner, engines = fake_clock_runner(["k1"])
+    gate, building = threading.Event(), threading.Event()
+    make, created = runner._source_factory, []
+
+    def slow_factory(cam):
+        src = make(cam)
+        created.append(src)
+        building.set()
+        gate.wait(5)
+        return src
+    runner._source_factory = slow_factory
+    runner.store.save({"nama": "Baru", "jenis": "alamat", "alamat": "rtsp://10.0.0.9/x"})
+    t = threading.Thread(target=runner.reload)
+    t.start()
+    building.wait(5)
+    stopper = threading.Thread(target=runner.stop)
+    stopper.start()
+    gate.set()
+    t.join(5)
+    stopper.join(5)
+    assert runner._cams == {} and all(s.stopped for s in created)
+
+
+def test_alarm_state_uses_the_same_snapshot(fake_clock_runner):                        # review M-11
+    runner, engines = fake_clock_runner(["k1"])
+    calls = []
+    original = engines["k1"].snapshot
+    engines["k1"].snapshot = lambda: calls.append(1) or original()
+    runner.snapshot()
+    assert len(calls) == 1

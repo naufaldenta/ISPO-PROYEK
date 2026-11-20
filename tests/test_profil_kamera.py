@@ -122,3 +122,12 @@ def test_high_model_that_cannot_score_falls_back_with_warning(tmp_path):     # F
     assert (m.violence.name, m.fall.name, m.peringatan) == ("violence_model.joblib", "fall_model.joblib", PERINGATAN)
     joblib.dump(_Broken(len(WINDOW_FEATURE_NAMES)), tmp_path / "violence_model_tinggi.joblib")
     assert model_untuk("tinggi", tmp_path).violence.name == "violence_model.joblib"
+
+
+def test_position_only_change_does_not_reconnect_a_video_camera(tmp_path):              # minor B5 #9
+    (tmp_path / "video").mkdir()
+    (tmp_path / "video" / "uji.mp4").write_bytes(b"")
+    store = KameraStore(tmp_path / "kamera.json", video_dir=tmp_path / "video")
+    item = store.save({"nama": "Simulasi", "jenis": "video", "video": "uji.mp4"})
+    after = store.save({"id": item["id"], "nama": "Simulasi", "jenis": "video", "video": "uji.mp4", "posisi": "tinggi"})
+    assert after["posisi"] == "tinggi" and after["rev"] == item["rev"]

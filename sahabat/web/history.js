@@ -91,6 +91,7 @@
           ? `Tindak lanjut: ${s.benar} kejadian benar · ${s.keliru} alarm keliru · ${s.tindak} perlu tindak lanjut · ${s.belum} belum ditandai`
           : "";
         if (r.hari) days = r.hari;
+        if (typeof r.sebelum === "number") window.SahabatRiwayatSebelum = r.sebelum;
         updateToggle();
         renderList();
         clearTimeout(refreshTimer);
@@ -98,6 +99,15 @@
       })
       .catch(() => {});
   }
+
+  // Klip lain dibuka dari pemutar ("Kamera lain"): judul dan sorotan daftar ikut kejadian itu.
+  document.addEventListener("sahabat-insp-item", (ev) => {
+    const it = ev.detail;
+    if (!it || !playing || playing.id === it.id) return;
+    playing = items.find((x) => x.id === it.id) || it;
+    $("history-caption").textContent = describe(playing);
+    renderList();
+  });
 
   function play(it) {
     playing = it;

@@ -16,6 +16,26 @@ $pythonFile = "cpython-$pythonVersion+$pythonTag-x86_64-pc-windows-msvc-install_
 $pythonUrl = "https://github.com/astral-sh/python-build-standalone/releases/download/$pythonTag/$pythonFile"
 $torchIndex = "https://download.pytorch.org/whl/cpu"
 
+function Read-YesNo([string]$Prompt, [int]$TimeoutS = 20) {
+    # Y/N dengan batas waktu; tanpa jawaban (atau tanpa konsol, misalnya keluaran dialihkan) = tidak.
+    Write-Host -NoNewline "$Prompt (Y/N, otomatis N dalam $TimeoutS detik): "
+    try {
+        $deadline = (Get-Date).AddSeconds($TimeoutS)
+        while ((Get-Date) -lt $deadline) {
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                Write-Host $key.KeyChar
+                return ($key.KeyChar -eq 'y' -or $key.KeyChar -eq 'Y')
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    } catch {
+        # Masukan bukan konsol: jangan menunggu.
+    }
+    Write-Host "N"
+    return $false
+}
+
 function Assert-Ok($what) {
     if ($LASTEXITCODE -ne 0) { throw "Gagal: $what (kode $LASTEXITCODE)" }
 }
@@ -70,8 +90,8 @@ Write-Host "Runtime siap di $runtime"
 if (-not $hasGpuPackage) {
     $gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch "Microsoft Basic" })
     if ($gpus.Count -gt 0) {
-        $answer = Read-Host "Pasang paket GPU (sekitar 20 MB) untuk Mode CCTV? (Y/N)"
-        if ($answer -match '^[Yy]') {
+        # Persiapan pertama bisa makan 10-30 menit tanpa ditunggui: pertanyaan ini tidak boleh menahan penyalaan.
+        if (Read-YesNo "Pasang paket GPU (sekitar 20 MB) untuk Mode CCTV?" 20) {
             try { & (Join-Path $PSScriptRoot "siapkan_gpu.ps1") -Ya } catch { Write-Host "Paket GPU belum terpasang: $_" }
         }
     }
