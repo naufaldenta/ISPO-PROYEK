@@ -42,6 +42,8 @@ class _Cam:
     engine: object
     pose: object = None                                 # CameraPose kamera ini (menerima pose hitungan runner)
     seen_version: int | None = None                     # versi sumber terakhir yang sudah dinilai
+    posisi: str = "dada"                                # profil_kamera: dada / tinggi
+    peringatan: str = ""                                # profil tinggi tanpa model tinggi yang lolos uji
     gerak: GerakMurah = field(default_factory=GerakMurah)
     last_step: float = float("-inf")
     last_lost: float = float("-inf")
@@ -98,8 +100,10 @@ class CctvRunner:
         from .engine import Engine
         from .predlog import PredLog
         from .server import FALL_MODEL, VIOLENCE_MODEL
+        from .profil_kamera import model_untuk
+        models = model_untuk(cam.get("posisi"))
         engine = Engine(self.cfg, source, pose, PredLog(DATA_DIR / "log", prefix="cctv-" + cam["id"]), False,
-                        VIOLENCE_MODEL, FALL_MODEL, None, self.riwayat, kamera=(cam["id"], cam["nama"]))
+                        models.violence, models.fall, None, self.riwayat, kamera=(cam["id"], cam["nama"]))
         engine.set_zone(cam.get("zona"))           # selalu: jangan mewarisi zona Mode Pameran dari cfg.zone
         return engine
 
@@ -109,8 +113,10 @@ class CctvRunner:
         source.start()
         pose = CameraPose(self.shared_pose, cam["id"])
         engine = self._engine_factory(cam, source, pose)
+        from .profil_kamera import model_untuk, posisi_bersih
+        posisi = posisi_bersih(cam.get("posisi"))
         return _Cam(cam["id"], cam["nama"], bool(cam.get("prioritas")), cam.get("zona"), _signature(cam), source,
-                    engine, pose)
+                    engine, pose, posisi=posisi, peringatan=model_untuk(posisi).peringatan)
 
     def _release(self, cam: _Cam) -> None:
         try:
@@ -185,6 +191,7 @@ class CctvRunner:
 
     def reload(self) -> None:
         """Daftar kamera berubah di panel Kamera: tambah, buang, perbarui, atau buka ulang sumber."""
+        from .profil_kamera import model_untuk, posisi_bersih
         wanted = {c["id"]: c for c in self.store.active()}
         with self._lock:
             removed = [cam for cid, cam in self._cams.items() if cid not in wanted]
@@ -201,6 +208,13 @@ class CctvRunner:
                 if info.get("zona") != cam.zona:
                     cam.zona = info.get("zona")
                     cam.engine.set_zone(cam.zona)
+                posisi = posisi_bersih(info.get("posisi"))
+                if posisi != cam.posisi:
+                    models = model_untuk(posisi)
+                    swap = getattr(cam.engine, "ganti_model", None)
+                    if swap is not None:
+                        swap(models.violence, models.fall)
+                    cam.posisi, cam.peringatan = posisi, models.peringatan
                 signature = _signature(info)
                 if signature != cam.signature:
                     cam.signature = signature
@@ -380,6 +394,7 @@ class CctvRunner:
                 fps.append(rate)
             rows.append({"id": cam.id, "nama": cam.nama, "bar": snap.bar, "text": snap.text, "fps": round(rate, 1),
                          "people": snap.people, "status": status, "prioritas": cam.prioritas, "zona": cam.zona,
+                         "posisi": cam.posisi, "peringatan": cam.peringatan,
                          "galat": getattr(cam.source, "error", "")})
         alarms.sort(key=lambda c: c.alarm_mono)
         status_of = {r["id"]: r["status"] for r in rows}
@@ -423,6 +438,12 @@ class CctvRunner:
         zone = cam.engine.set_zone(points)
         cam.zona = [list(p) for p in zone] if zone else None
         return zone
+
+    def asisten(self, cam_id: str) -> dict | None:
+        """Petunjuk pemasangan kamera ini (asisten_kamera), atau None bila kamera tidak ada di Mode CCTV."""
+        cam = self._cams.get(cam_id)
+        helper = getattr(cam.engine, "asisten", None) if cam is not None else None
+        return helper.ringkas() if helper is not None else None
 
     def latest_jpeg(self, cam_id: str, small: bool = False) -> bytes | None:
         cam = self._cams.get(cam_id)

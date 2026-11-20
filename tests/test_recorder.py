@@ -85,3 +85,24 @@ def test_full_queue_drops_frames_instead_of_blocking(tmp_path):
     r.start()
     r.close()
     assert len(list(read_session(r.folder))) == 2
+
+
+def test_recorder_writes_session_meta(tmp_path):                                   # Bagian 5
+    rec = Recorder(tmp_path, name="sesi", start=False, meta={"jenis": "biasa", "kamera": "Lorong", "posisi": "tinggi"})
+    import json
+    assert json.loads((tmp_path / "sesi" / "meta.json").read_text(encoding="utf-8")) == \
+        {"jenis": "biasa", "kamera": "Lorong", "posisi": "tinggi"}
+    rec.close()
+    assert not (tmp_path / "tanpa").exists()
+    Recorder(tmp_path, name="tanpa", start=False).close()
+    assert not (tmp_path / "tanpa" / "meta.json").exists()
+
+
+def test_session_meta_names_the_cctv_camera(tmp_path, monkeypatch):                # Bagian 5
+    from sahabat import server
+    from sahabat.config import Config
+    store = type("S", (), {"get_public": lambda self, cam_id: {"nama": "Kelas 7B"} if cam_id == "k1" else None})()
+    monkeypatch.setattr(server, "default_store", lambda: store)
+    cfg = Config(camera="ipcam:k1", posisi_kamera="tinggi")
+    assert server.session_meta(cfg, biasa=True) == {"jenis": "biasa", "kamera": "Kelas 7B", "posisi": "tinggi"}
+    assert server.session_meta(Config(camera=0), biasa=False) == {"jenis": "adegan", "kamera": "0", "posisi": "dada"}

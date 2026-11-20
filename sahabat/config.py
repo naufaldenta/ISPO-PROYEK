@@ -26,7 +26,7 @@ _SETTINGS_LOCK = threading.RLock()
 
 LOCAL_FIELDS = ("imgsz", "tuned_for", "slow", "port", "camera", "words_enabled", "microphone",
                 "camera_flip", "clips_enabled", "zone", "lan_enabled", "lan_code", "cctv_enabled",
-                "hitung", "gpu_ms", "gpu_id")
+                "hitung", "gpu_ms", "gpu_id", "posisi_kamera")
 
 
 @dataclass
@@ -40,6 +40,7 @@ class Config:
     cctv_safety_s: float = 5.0        # kamera siaga tetap dinilai pose sekali tiap selang ini
     cctv_motion_hz: float = 5.0       # laju cek gerak murah kamera siaga
     hitung: str = "otomatis"          # perangkat hitung Mode CCTV: otomatis / gpu / cpu
+    posisi_kamera: str = "dada"       # kamera Mode Pameran: "dada" (model sekarang) atau "tinggi" (profil_kamera)
     gpu_ms: float | None = None       # hasil ukur GPU terakhir (milidetik per gambar)
     gpu_id: int | None = None         # adaptor DirectML yang terakhir dipilih
     imgsz_candidates: tuple[int, ...] = (480, 416, 320)

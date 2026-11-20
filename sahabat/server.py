@@ -184,6 +184,11 @@ def build_mode(cfg: Config, engine):
     return ModeControl(engine, make_runner, remember_cctv)
 
 
+def remember_posisi(value: str) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, posisi_kamera=value)
+
+
 def remember_hitung(value: str) -> None:
     from .config import SETTINGS_PATH, update_local
     update_local(SETTINGS_PATH, hitung=value)
@@ -232,6 +237,18 @@ def remember_clips(on: bool) -> None:
     update_local(SETTINGS_PATH, clips_enabled=bool(on))
 
 
+def _with_warning(items: list[dict]) -> list[dict]:
+    """Kamera berprofil tinggi tanpa model tinggi yang lolos uji mendapat peringatan (profil_kamera)."""
+    from .profil_kamera import model_untuk
+    cache: dict = {}
+    for it in items:
+        posisi = it.get("posisi", "dada")
+        if posisi not in cache:
+            cache[posisi] = model_untuk(posisi).peringatan
+        it["peringatan"] = cache[posisi]
+    return items
+
+
 def _list_riwayat(riwayat, kamera: str | None = None) -> list[dict]:
     riwayat.prune()                     # aplikasi bisa menyala berhari-hari: bersihkan juga saat panel dibuka
     return riwayat.list() if kamera is None else riwayat.list(kamera=kamera)
@@ -241,7 +258,7 @@ def _local_only(method: str, path: str) -> bool:
     """Pengaturan yang hanya boleh diubah dari laptop SAHABAT sendiri, bukan dari HP atau laptop lain."""
     if path.startswith("/api/jaringan") or path.startswith("/api/kamera"):
         return True
-    if method == "POST" and path in ("/api/cctv", "/api/cctv/hitung"):
+    if method == "POST" and path in ("/api/cctv", "/api/cctv/hitung", "/api/posisi"):
         return True
     if path.startswith("/api/riwayat/") and ((method == "POST" and path.endswith("/tindak"))
                                              or (method == "GET" and path.endswith("/unduh"))):
@@ -532,6 +549,55 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             pesan = "Tersimpan. Berlaku saat Mode CCTV dinyalakan berikutnya (matikan lalu nyalakan lagi)."
         return {**await run_in_threadpool(compute_info), "pesan": pesan}
 
+    def position_info() -> dict:
+        from .profil_kamera import LABEL, model_untuk, posisi_bersih
+        posisi = posisi_bersih(getattr(getattr(engine, "cfg", None), "posisi_kamera", "dada"))
+        return {"ok": True, "posisi": posisi, "pilihan": [{"value": k, "label": v} for k, v in LABEL.items()],
+                "peringatan": model_untuk(posisi).peringatan}
+
+    @app.get("/api/asisten")
+    async def assistant(kamera: str | None = None):
+        """Petunjuk pemasangan: kamera Mode CCTV (?kamera=ID) atau kamera Mode Pameran. Hanya membaca."""
+        if kamera:
+            runner = mode.cctv if mode is not None and mode.hidup else None
+            helper = getattr(runner, "asisten", None)
+            result = await run_in_threadpool(helper, kamera) if helper is not None else None
+        else:
+            helper = getattr(engine, "asisten", None)
+            result = await run_in_threadpool(helper.ringkas) if helper is not None else None
+        if result is None:
+            return JSONResponse({"ok": False, "error": "Kamera tidak sedang dipantau."}, status_code=404)
+        return {"ok": True, **result}
+
+    @app.get("/api/posisi")
+    async def position_get():
+        """Posisi kamera Mode Pameran (profil_kamera); HP boleh membaca."""
+        return await run_in_threadpool(position_info)
+
+    @app.post("/api/posisi")
+    async def position_set(request: Request):
+        """Posisi kamera Mode Pameran: model untuk posisi itu langsung dipakai mesin, dan pilihannya diingat."""
+        from .profil_kamera import POSISI, model_untuk
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        value = body.get("posisi") if isinstance(body, dict) else None
+        if value not in POSISI:
+            return JSONResponse({"ok": False, "error": "Pilih posisi kamera dari daftar."}, status_code=400)
+        cfg = getattr(engine, "cfg", None)
+        if cfg is not None:
+            cfg.posisi_kamera = value
+        models = await run_in_threadpool(model_untuk, value)
+        swap = getattr(engine, "ganti_model", None)
+        if swap is not None:
+            await run_in_threadpool(swap, models.violence, models.fall)
+        try:
+            await run_in_threadpool(remember_posisi, value)
+        except OSError:
+            pass                                    # tetap berlaku untuk sesi ini
+        return await run_in_threadpool(position_info)
+
     @app.post("/api/tanda")
     async def mark(request: Request):
         """Pencatat menandai adegan yang baru diperagakan (hanya berarti saat merekam uji)."""
@@ -793,7 +859,7 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     async def kamera_list():
         brands = [{"id": key, "nama": info["nama"], "port": info["port"], "channel": info["channel"]}
                   for key, info in MEREK.items()]
-        return {"ok": True, "kamera": await run_in_threadpool(kamera.list_public), "merek": brands}
+        return {"ok": True, "kamera": await run_in_threadpool(_with_warning, kamera.list_public()), "merek": brands}
 
     @app.post("/api/kamera")
     async def kamera_save(request: Request):
@@ -894,10 +960,23 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
     return app
 
 
-def build_engine(cfg: Config, source=None, record: bool = False) -> Engine:
+def session_meta(cfg: Config, biasa: bool = False) -> dict:
+    """meta.json rekaman uji: jenis ("adegan" dengan tanda J/K/B, atau "biasa" = kegiatan biasa tanpa adegan),
+    nama kamera (IP camera/DVR memakai namanya di panel Kamera), dan posisi kamera."""
+    from .kamera import IPCAM_PREFIX
+    from .profil_kamera import posisi_bersih
+    name = str(cfg.camera)
+    if isinstance(cfg.camera, str) and cfg.camera.startswith(IPCAM_PREFIX):
+        item = default_store().get_public(cfg.camera[len(IPCAM_PREFIX):])
+        name = item["nama"] if item else name
+    return {"jenis": "biasa" if biasa else "adegan", "kamera": name, "posisi": posisi_bersih(cfg.posisi_kamera)}
+
+
+def build_engine(cfg: Config, source=None, record: bool = False, biasa: bool = False) -> Engine:
     """Merangkai mesin nyata: webcam (atau file), YOLO-pose, log, dan model bila ada.
 
-    record=True menyalakan perekam uji (data/rekaman/); bawaannya tidak ada video yang disimpan.
+    record=True menyalakan perekam uji (data/rekaman/); bawaannya tidak ada video yang disimpan. Sumbernya sumber
+    Mode Pameran apa pun, termasuk IP camera/DVR (ipcam:<id>). biasa=True menandai rekaman kegiatan biasa.
     """
     from .pose import YoloPose
     from .predlog import PredLog
@@ -912,10 +991,12 @@ def build_engine(cfg: Config, source=None, record: bool = False) -> Engine:
     recorder = None
     if record:
         from .recorder import Recorder
-        recorder = Recorder(DATA_DIR / "rekaman")
+        recorder = Recorder(DATA_DIR / "rekaman", meta=session_meta(cfg, biasa))
     riwayat = Riwayat(DATA_DIR / "riwayat", keep_clips=cfg.clips_enabled, before_s=cfg.clip_before_s,
                       after_s=cfg.clip_after_s, keep_days=cfg.clip_keep_days)
-    return Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, VIOLENCE_MODEL, FALL_MODEL, recorder,
+    from .profil_kamera import model_untuk
+    models = model_untuk(cfg.posisi_kamera)            # "dada" (bawaan) = model sekarang, sama persis dengan dulu
+    return Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, models.violence, models.fall, recorder,
                   riwayat)
 
 

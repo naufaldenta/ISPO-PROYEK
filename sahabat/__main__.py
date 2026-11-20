@@ -117,6 +117,7 @@ def _first_frame(source, wait_s: float = 6.0) -> np.ndarray:
 
 def main() -> int:
     record = "--rekam" in sys.argv[1:]
+    biasa = record and "--biasa" in sys.argv[1:]       # rekam kegiatan biasa (tanpa adegan) untuk alarm keliru
     cfg = load(SETTINGS_PATH)
     sock = claim_port(cfg.port)
     if sock is None:                                   # port dipegang: SAHABAT lain, atau program lain
@@ -155,9 +156,11 @@ def main() -> int:
     if cfg.slow:
         print("Peringatan: laptop ini terlalu lambat, deteksi bisa meleset.")
 
-    engine = build_engine(cfg, source, record=record)
+    engine = build_engine(cfg, source, record=record, biasa=biasa)
     if record and engine.recorder is not None and engine.recorder.active:
         print(f"MEREKAM: video uji disimpan di {engine.recorder.folder}")
+        if biasa:
+            print("Jenis rekaman: KEGIATAN BIASA (tanpa adegan). Biarkan kamera merekam kegiatan sehari-hari.")
         print("Rekaman berisi wajah orang. Hapus folder itu setelah penyetelan selesai.")
     engine.start()
     listener = None

@@ -5,7 +5,8 @@ supaya sesi uji bisa diputar ulang berkali-kali saat menyetel ambang (lihat lati
 
 Satu sesi = satu folder di data/rekaman/, berisi potongan 0001.avi, 0002.avi, ... (MJPG: tetap terbaca
 walau jendela aplikasi ditutup paksa), 0001.txt, ... (satu cap waktu per frame), dan tanda.jsonl
-(tanda adegan yang ditekan pencatat). Rekaman berisi wajah orang: hapus foldernya setelah selesai.
+(tanda adegan yang ditekan pencatat), dan meta.json (jenis rekaman "adegan" atau "biasa", nama kamera, posisi
+kamera; dibaca latih.kamera_tinggi sekolah). Rekaman berisi wajah orang: hapus foldernya setelah selesai.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ SEGMENT_S = 60.0
 MIN_FREE_BYTES = 2 * 1024 ** 3      # berhenti merekam sebelum disk benar-benar penuh
 NOMINAL_FPS = 10.0                  # hanya untuk pemutar video biasa; waktu sebenarnya ada di berkas .txt
 MARKS_FILE = "tanda.jsonl"
+META_FILE = "meta.json"
 _EPS = 1e-6
 
 
@@ -34,7 +36,7 @@ def _free_bytes(folder: Path) -> int:
 class Recorder:
     def __init__(self, root: Path, *, name: str | None = None, segment_s: float = SEGMENT_S,
                  min_free: int = MIN_FREE_BYTES, free_bytes: Callable[[Path], int] = _free_bytes,
-                 queue_size: int = 50, start: bool = True) -> None:
+                 queue_size: int = 50, start: bool = True, meta: dict | None = None) -> None:
         self.folder = Path(root) / (name or datetime.now().strftime("%Y%m%d-%H%M%S"))
         self.segment_s = segment_s
         self.min_free = min_free
@@ -55,6 +57,11 @@ class Recorder:
             print("Peringatan: rekaman uji tidak bisa disimpan; lanjut tanpa merekam.")
             return
         self.active = True
+        if meta is not None:
+            try:
+                (self.folder / META_FILE).write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
         if start:
             self.start()
 

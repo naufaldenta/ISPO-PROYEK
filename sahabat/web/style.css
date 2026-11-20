@@ -352,6 +352,8 @@ body.remote #words { cursor: default; }
   font-weight: 800; font-size: min(3vh, 2vw);
 }
 #grid-back { position: fixed; top: 8vh; left: 1.5vw; font-size: 2.2vh; padding: 0.8vh 1.4vw; background: #303944; color: #fff; }
+#asisten-line { position: fixed; top: 8vh; right: 1.5vw; max-width: min(60vw, 520px); margin: 0; padding: 0.6vh 1vw;
+  background: rgba(20, 26, 34, 0.85); color: #e8edf2; font-size: 1.8vh; border-radius: 6px; overflow-wrap: anywhere; }
 body.cctv #bar-text { white-space: normal; text-align: center; font-size: min(4.6vh, 2.6vw); }
 body.cctv[data-bar="jatuh"] #bar-text, body.cctv[data-bar="kekerasan"] #bar-text { font-size: min(4.6vh, 2.6vw); }
 #ack-all { background: #fff; color: #8f1d14; }
@@ -369,6 +371,7 @@ body.cctv[data-bar="jatuh"] #bar-text, body.cctv[data-bar="kekerasan"] #bar-text
 @media (max-width: 640px) {
   #grid { top: 15vh; grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(28vh, 1fr); overflow-y: auto; }
   #grid-back { top: 15vh; }
+  #asisten-line { top: calc(15vh + 44px); left: 1.5vw; right: 1.5vw; max-width: none; font-size: 13px; }
   .tile-name, .tile-status { font-size: 13px; }
 }
 body.remote #cctv-toggle { display: none !important; }

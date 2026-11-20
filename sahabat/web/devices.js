@@ -79,9 +79,61 @@
     }
   }
 
+  // ---- posisi kamera (profil_kamera): model kamera tinggi hanya bila sudah lolos uji ----
+  function showPosition(info) {
+    const select = $("posisi-kamera");
+    if (!select.options.length) info.pilihan.forEach((p) => select.add(new Option(p.label, p.value)));
+    select.value = info.posisi;
+    $("posisi-status").textContent = info.peringatan ||
+      (info.posisi === "tinggi" ? "Model kamera tinggi dipakai (eksperimen)." : "");
+  }
+
+  async function loadPosition() {
+    try {
+      const response = await fetch("/api/posisi", { cache: "no-store" });
+      showPosition(await response.json());
+    } catch (error) {
+      $("posisi-status").textContent = "Posisi kamera belum bisa dibaca.";
+    }
+  }
+
+  $("posisi-kamera").addEventListener("change", async () => {
+    const select = $("posisi-kamera");
+    select.disabled = true;
+    try {
+      const response = await fetch("/api/posisi", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ posisi: select.value }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok === false) throw new Error(result.error || "Posisi belum tersimpan.");
+      showPosition(result);
+    } catch (error) {
+      $("posisi-status").textContent = error.message;
+      loadPosition();
+    } finally {
+      select.disabled = false;
+    }
+  });
+
+  // Petunjuk pemasangan kamera Mode Pameran (asisten_kamera), diperbarui tiap 2 dtk selama dialog terbuka.
+  let assistTimer = null;
+  async function showAssist() {
+    clearTimeout(assistTimer);
+    if (!dialog.open) return;
+    try {
+      const r = await fetch("/api/asisten", { cache: "no-store" });
+      const result = await r.json();
+      $("asisten-status").textContent = result.ok ? "Pemasangan: " + result.saran.join(" · ") : "";
+    } catch (e) {
+      $("asisten-status").textContent = "";
+    }
+    assistTimer = setTimeout(showAssist, 2000);
+  }
+
   function open() {
     if (!dialog.open) dialog.showModal();
     showVolume();
+    loadPosition();
+    showAssist();
     scan();
   }
 

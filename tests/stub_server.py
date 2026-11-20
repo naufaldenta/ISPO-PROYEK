@@ -56,6 +56,13 @@ class StubListener:
 class StubCctv:
     """Mode CCTV tiruan: 3 kamera bergambar warna; bar per kamera disetel lewat /stub/cctv/<kamera>/<bar>."""
 
+    def asisten(self, cam_id: str):
+        if cam_id not in self.bars:
+            return None
+        return {"orang": 1, "utuh_persen": 64, "tinggi_orang": 0.12, "rasio_kaki_badan": 1.18,
+                "saran": ["Badan terlihat utuh: 64%", "Orang terlalu kecil, dekatkan kamera atau pakai lensa lebih sempit",
+                          "Kamera terlalu menunduk"]}
+
     COLORS = {"k1": (40, 90, 40), "k2": (40, 40, 110), "k3": (90, 60, 30), "k4": (70, 30, 70), "k5": (30, 80, 90),
               "k6": (90, 90, 30), "k7": (50, 50, 50)}
 
@@ -197,8 +204,11 @@ def app():
     # panel "HP / laptop lain" ikut tampil; server keduanya hanya di 127.0.0.1 supaya tidak memicu firewall
     server.remember_lan = lambda on, code: None             # jangan menulis ke pengaturan laptop sungguhan
     server.remember_hitung = lambda value: None
+    server.remember_posisi = lambda value: None
     from sahabat.config import Config
     engine.cfg = Config()                                   # pilihan perangkat hitung Mode CCTV
+    from sahabat.asisten_kamera import Asisten
+    engine.asisten = Asisten()                              # Mode Pameran tiruan: belum ada orang terlihat
     lan = LanServer(0, "ABCD2345", host="127.0.0.1", addresses=lambda: ["192.168.1.13"])
     import tempfile
     from pathlib import Path

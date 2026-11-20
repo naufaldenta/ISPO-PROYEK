@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .profil_kamera import posisi_bersih
 from .merek import (MEREK, SANDI_MARK, SKEMA_BOLEH, alamat_merek, isi_sandi_query, pasang_login, pisah_login,
                     pisah_sandi_query, samarkan)
 from .rahasia import buka, simpan
@@ -85,6 +86,11 @@ def _potong(value) -> tuple[int, int] | None:
     grid = _int(value[0], "Ukuran grid DVR", 2, 4)
     ubin = _int(value[1], "Nomor ubin", 0, grid * grid - 1)
     return grid, ubin
+
+
+# Nilai isian form yang tidak ada di berkas lama (sama dengan bawaan _clean).
+FORM_DEFAULTS = {"merek": "", "host": "", "port": 0, "channel": 1, "substream": True, "alamat": "", "perangkat": "",
+                 "video": "", "pengguna": "", "potong": None}
 
 
 class KameraStore:
@@ -161,7 +167,8 @@ class KameraStore:
         if sandi is not None:
             sandi = _text(sandi, "Kata sandi", 128)
         out = {"nama": nama, "jenis": jenis, "merek": "", "host": "", "port": 0, "channel": 1, "substream": True,
-               "alamat": "", "perangkat": "", "video": "", "pengguna": pengguna, "potong": _potong(data.get("potong"))}
+               "alamat": "", "perangkat": "", "video": "", "pengguna": pengguna, "potong": _potong(data.get("potong")),
+               "posisi": posisi_bersih(data.get("posisi"))}
         if jenis == "merek":
             merek = data.get("merek")
             if merek not in MEREK:
@@ -227,7 +234,7 @@ class KameraStore:
                 "perangkat": item.get("perangkat", ""), "potong": list(potong) if potong else None,
                 "video": item.get("video", ""), "aktif": bool(item.get("aktif", True)),
                 "prioritas": bool(item.get("prioritas", False)), "zona": item.get("zona"),
-                "rev": int(item.get("rev", 0))}
+                "posisi": posisi_bersih(item.get("posisi")), "rev": int(item.get("rev", 0))}
 
     # ---- API ----
     def list_public(self) -> list[dict]:
@@ -249,7 +256,11 @@ class KameraStore:
                     raise ValueError("Kamera tidak ditemukan. Muat ulang daftar kamera.")
                 old_sandi = item.get("sandi", "")
                 kept = {k: item[k] for k in ("aktif", "prioritas", "zona") if k in item}   # hanya lewat set_*
-                rev = int(item.get("rev", 0)) + 1          # naik tiap simpan: Mode CCTV menyambung ulang
+                same_stream = sandi is None and all(
+                    (list(v) if isinstance(v, tuple) else v) == item.get(k, FORM_DEFAULTS.get(k))
+                    for k, v in clean.items() if k != "posisi")
+                # naik tiap simpan (Mode CCTV menyambung ulang), kecuali yang berubah hanya posisi kamera
+                rev = int(item.get("rev", 0)) + (0 if same_stream else 1)
                 item.clear()
                 item.update(id=cam_id, **clean, **kept, rev=rev)
                 item["sandi"] = old_sandi if sandi is None else (simpan(sandi) if sandi else "")

@@ -147,6 +147,7 @@
       if (grid.children[i] !== tile) grid.insertBefore(tile, grid.children[i] || null);
       tile.querySelector("img").alt = "Kamera " + k.nama;
       tile.querySelector(".tile-name").textContent = k.nama + (k.prioritas ? " ★" : "");
+      tile.title = k.peringatan ? k.nama + ": " + k.peringatan : "";
       const status = tile.querySelector(".tile-status");
       status.dataset.status = k.status;
       status.textContent = "● " + (STATUS_TEXT[k.status] || k.status);
@@ -161,8 +162,28 @@
     $("grid-back").hidden = !enlarged;
   }
 
+  // Petunjuk pemasangan kamera (asisten_kamera) untuk kamera yang diperbesar, diperbarui tiap 2 dtk.
+  let assistTimer = null;
+  async function showAssist() {
+    clearTimeout(assistTimer);
+    const line = $("asisten-line");
+    if (!enlarged) { line.hidden = true; return; }
+    const id = enlarged;
+    try {
+      const r = await fetch("/api/asisten?kamera=" + encodeURIComponent(id), { cache: "no-store" });
+      const result = await r.json();
+      if (enlarged !== id) return;
+      line.textContent = result.ok ? "Pemasangan: " + result.saran.join(" · ") : "";
+      line.hidden = !result.ok;
+    } catch (e) {
+      line.hidden = true;
+    }
+    assistTimer = setTimeout(showAssist, 2000);
+  }
+
   function enlarge(id) {
     enlarged = id;
+    showAssist();
     $("video").src = "/video?kamera=" + encodeURIComponent(id) + "&t=" + Date.now();
     $("grid").hidden = true;
     $("video").hidden = false;
@@ -172,6 +193,7 @@
 
   function backToGrid() {
     enlarged = null;
+    showAssist();
     $("video").removeAttribute("src");
     $("video").hidden = true;
     $("grid").hidden = false;
@@ -183,6 +205,7 @@
     for (const tile of tiles.values()) { clearTimeout(tile.timer); tile.querySelector("img").removeAttribute("src"); tile.remove(); }
     tiles.clear();
     enlarged = null;
+    showAssist();
     $("grid").hidden = true;
     $("grid-back").hidden = true;
     $("video").hidden = false;

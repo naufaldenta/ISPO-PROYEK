@@ -51,6 +51,12 @@
       where.className = "kamera-where";
       where.textContent = it.alamat_tampil + (it.potong ? ` · ubin ${it.potong[1] + 1} dari ${it.potong[0]}×${it.potong[0]}` : "");
       info.append(name, where);
+      if (it.posisi === "tinggi") {
+        const pos = document.createElement("span");
+        pos.className = "kamera-where";
+        pos.textContent = "Posisi: tinggi (eksperimen)" + (it.peringatan ? ". " + it.peringatan : "");
+        info.append(pos);
+      }
       if (it.sandi_rusak) {
         const warn = document.createElement("span");
         warn.className = "kamera-warn";
@@ -272,6 +278,7 @@
     $("kamera-form-title").textContent = "Ubah kamera: " + it.nama;
     $("kamera-cancel").hidden = false;
     $("kamera-nama").value = it.nama;
+    $("kamera-posisi").value = it.posisi || "dada";
     $("kamera-pengguna").value = it.pengguna || "";
     $("kamera-sandi").placeholder = it.ada_sandi && !it.sandi_rusak ? "(tetap memakai kata sandi tersimpan)" : "";
     if (it.jenis === "merek") {
@@ -295,7 +302,8 @@
   }
 
   function collect() {
-    const data = { nama: $("kamera-nama").value.trim(), jenis: mode, pengguna: $("kamera-pengguna").value.trim() };
+    const data = { nama: $("kamera-nama").value.trim(), jenis: mode, pengguna: $("kamera-pengguna").value.trim(),
+                   posisi: $("kamera-posisi").value };
     if (editing) data.id = editing.id;
     const sandi = $("kamera-sandi").value;
     if (sandi) data.sandi = sandi;

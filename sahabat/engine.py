@@ -12,6 +12,7 @@ from typing import Literal
 import cv2
 import numpy as np
 
+from .asisten_kamera import Asisten
 from .alarm import AlarmManager
 from .config import Config
 from .fall import FallDetector
@@ -89,9 +90,11 @@ class Engine:
         self.fall = FallDetector(cfg, fall_model)
         self.gestures = GestureDetector(cfg)
         self._fall_model_path = fall_model
+        self.violence_model_path = violence_model
         self._input_version = 0
         self.violence = ViolenceScorer(cfg, violence_model)
         self.alarm = AlarmManager(cfg)
+        self.asisten = Asisten()       # petunjuk pemasangan kamera dari pose yang terlihat
         self._alarm_seq = 0
         self._step_times: deque[float] = deque()
         self._last_t = 0.0
@@ -104,6 +107,19 @@ class Engine:
         self._thread: threading.Thread | None = None
 
     # ---- satu putaran penilaian -------------------------------------------------
+
+    @property
+    def fall_model_path(self):
+        return self._fall_model_path
+
+    def ganti_model(self, violence_model: Path | None, fall_model: Path | None) -> None:
+        """Posisi kamera diganti (profil_kamera): penilai kekerasan dan jatuh memakai model lain mulai penilaian
+        berikutnya. Model dimuat di luar kunci; pelacak, riwayat gerak, zona, dan alarm yang menyala tetap."""
+        violence = ViolenceScorer(self.cfg, violence_model)
+        fall = FallDetector(self.cfg, fall_model)
+        with self._lock:
+            self.violence, self.fall = violence, fall
+            self.violence_model_path, self._fall_model_path = violence_model, fall_model
 
     def lupakan_orang(self) -> None:
         """Nomor orang dari pelacak mulai lagi dari 1 (Mode CCTV pindah dari GPU ke CPU): riwayat gerak lama
@@ -161,6 +177,10 @@ class Engine:
                     people = self.history.update(t, people)
                     tracks = self.history.tracks
                     modes = {track_id: tr.mode for track_id, tr in tracks.items()}
+                    try:                    # petunjuk pemasangan tidak boleh pernah mengganggu penilaian
+                        self.asisten.amati(t, people, frame.shape[:2], modes)
+                    except Exception:
+                        self._report("asisten")
                     fall_ids = self.fall.tick(t, tracks, frame.shape[0])
                     pairs = self.violence.score(tracks)
                     seen = {p.track_id for p in people}

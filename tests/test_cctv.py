@@ -446,3 +446,20 @@ def test_without_fallback_gpu_error_is_reported_not_fatal(fake_clock_runner):
     runner.shared_pose.fail = RuntimeError("rusak")
     runner.run_for(0.3)
     assert "rusak" in runner.snapshot()["galat_gpu"]
+
+
+def test_reload_swaps_models_when_position_changes(fake_clock_runner, monkeypatch):     # Bagian 5
+    from sahabat import profil_kamera
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1})
+    swaps = []
+    engines["k1"].ganti_model = lambda v, f: swaps.append((v.name, f.name))
+    reopened = runner.sources["k1"].reopened
+    item = runner.store.get_public("k1")
+    runner.store.save({"id": "k1", "nama": item["nama"], "jenis": "alamat", "alamat": "rtsp://10.0.0.1/x",
+                       "pengguna": "", "posisi": "tinggi"})
+    runner.reload()
+    row = runner.snapshot()["kamera"][0]
+    assert swaps == [("violence_model.joblib", "fall_model.joblib")] and runner.sources["k1"].reopened == reopened
+    assert row["posisi"] == "tinggi" and row["peringatan"] == profil_kamera.PERINGATAN
+    runner.reload()
+    assert len(swaps) == 1                                                  # posisi sama: tidak ditukar lagi

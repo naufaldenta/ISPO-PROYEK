@@ -393,3 +393,55 @@ def test_compute_choice_while_cctv_off_says_it_applies_on_next_start(mode_env, m
         r = c.post("/api/cctv/hitung", json={"hitung": "cpu"}).json()
         assert r["ok"] and engine.cfg.hitung == "cpu" and "Berlaku saat Mode CCTV dinyalakan" in r["pesan"]
         assert c.get("/api/cctv/hitung").json()["aktif"] is None
+
+
+def test_pameran_position_is_saved_and_swaps_models(mode_env, monkeypatch, tmp_path):     # Bagian 5
+    from sahabat.profil_kamera import LABEL, PERINGATAN
+    mode, engine, runner = mode_env()
+    saved, swaps = [], []
+    monkeypatch.setattr(server, "remember_posisi", saved.append)
+    engine.ganti_model = lambda v, f: swaps.append((v.name, f.name))
+    app = create_app(engine, lan=FakeLan(), kamera=_store(tmp_path), mode=mode)
+    with TestClient(app) as c:
+        got = c.get("/api/posisi").json()
+        assert got["posisi"] == "dada" and got["peringatan"] == ""
+        assert got["pilihan"] == [{"value": k, "label": v} for k, v in LABEL.items()]
+        r = c.post("/api/posisi", json={"posisi": "tinggi"}).json()
+        assert r["ok"] and r["posisi"] == "tinggi" and r["peringatan"] == PERINGATAN
+        assert saved == ["tinggi"] and engine.cfg.posisi_kamera == "tinggi"
+        assert swaps == [("violence_model.joblib", "fall_model.joblib")]
+        assert c.post("/api/posisi", json={"posisi": "atap"}).status_code == 400
+    with TestClient(app, client=("192.168.1.50", 5000)) as p:                              # Review Focus: HP
+        p.cookies.set(COOKIE, "ABCD2345")
+        assert p.post("/api/posisi", json={"posisi": "dada"}).status_code == 403
+        assert p.get("/api/posisi").json()["posisi"] == "tinggi"
+    assert saved == ["tinggi"]
+
+
+def test_camera_list_warns_for_high_position_without_high_model(tmp_path):                # Bagian 5
+    from sahabat.profil_kamera import PERINGATAN
+    store = _store(tmp_path)
+    item = store.get_public("k1")
+    store.save({"id": "k1", "nama": item["nama"], "jenis": "alamat", "alamat": "rtsp://10.0.0.1/x", "posisi": "tinggi"})
+    engine = ModeEngine()
+    app = create_app(engine, lan=FakeLan(), kamera=store, mode=ModeControl(engine, FakeRunner, lambda on: None))
+    with TestClient(app) as c:
+        rows = {r["id"]: r for r in c.get("/api/kamera").json()["kamera"]}
+    assert rows["k1"]["posisi"] == "tinggi" and rows["k1"]["peringatan"] == PERINGATAN
+    assert rows["k2"]["posisi"] == "dada" and rows["k2"]["peringatan"] == ""
+
+
+def test_assistant_api_for_pameran_and_cctv_cameras(mode_env, tmp_path):                  # Bagian 5
+    from sahabat.asisten_kamera import WAIT, Asisten
+    mode, engine, runner = mode_env()
+    engine.asisten = Asisten()
+    app = create_app(engine, lan=FakeLan(), kamera=_store(tmp_path), mode=mode)
+    with TestClient(app) as c:
+        assert c.get("/api/asisten").json()["saran"] == [WAIT]
+        mode.set_cctv(True)
+        runner.asisten = lambda cam_id: {"saran": ["dari " + cam_id]} if cam_id == "k1" else None
+        assert c.get("/api/asisten?kamera=k1").json() == {"ok": True, "saran": ["dari k1"]}
+        assert c.get("/api/asisten?kamera=k9").status_code == 404
+    with TestClient(app, client=("192.168.1.50", 5000)) as p:                              # HP boleh membaca
+        p.cookies.set(COOKIE, "ABCD2345")
+        assert p.get("/api/asisten?kamera=k1").json()["saran"] == ["dari k1"]

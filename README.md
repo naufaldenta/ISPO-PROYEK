@@ -169,6 +169,25 @@ sekitar 30 ms per kamera di laptop pengembang. Jadi walau GPU-nya sangat cepat, 
 sekaligus; prosesor yang lebih cepat menaikkan batas itu, dan kamera yang kosong tetap dipantau (siaga). Kartu grafis
 bawaan prosesor yang lemah bisa lebih lambat dari CPU. Pilihan Otomatis mengukurnya dan tetap memakai CPU bila begitu.
 
+**Posisi kamera (kamera tinggi).** Setiap kamera punya pilihan **Posisi kamera**: di form panel Kamera untuk
+kamera CCTV, dan di **Perangkat** untuk kamera Mode Pameran.
+
+| Posisi | Model yang dipakai |
+|---|---|
+| Setinggi dada/kepala (sekitar 1,2–1,8 m), bawaan | Model sekarang |
+| Tinggi, di pojok atau langit-langit (sekitar 2,2–3 m) | Model kamera tinggi bila sudah lolos uji; bila belum, model sekarang dengan peringatan "Akurasi untuk kamera tinggi belum teruji." |
+
+Model kamera tinggi hanya dipasang bila, pada data kamera tinggi yang tidak ikut dilatih, ia menangkap lebih banyak
+kejadian tanpa menambah alarm keliru. Uji 20 November dengan dataset terbuka belum meloloskannya. Kandidat kekerasan
+menangkap 96 dari 324 kekerasan kamera tinggi, dibanding 66 untuk model sekarang, tetapi alarm keliru di klip biasa
+ikut naik. Jadi profil tinggi masih **eksperimen** sampai diuji dengan rekaman sekolah (lihat "Merekam di sekolah").
+Untuk jatuh dari kamera tinggi, aturan khusus "turun ke bawah gambar" tetap bekerja di kedua posisi.
+
+**Asisten pemasangan.** Saat memasang kamera, buka **Perangkat** (Mode Pameran) atau perbesar ubin kamera (Mode CCTV).
+Baris **Pemasangan** memberi petunjuk dari pose 30 detik terakhir, misalnya "Badan terlihat utuh: 92%", "Orang
+terlalu kecil, dekatkan kamera atau pakai lensa lebih sempit", "Kamera terlalu menunduk", atau "Kaki sering terpotong,
+naikkan atau mundurkan kamera". Minta satu orang berjalan di depan kamera saat menyetelnya.
+
 Layar HP / laptop lain (jaringan lokal) menampilkan grid yang sama dengan gambar kecil 5 fps supaya WiFi tidak berat.
 Menyalakan Mode CCTV, mengubah kamera, dan menggambar zona tetap hanya dari laptop SAHABAT. Mode CCTV yang dinyalakan
 diingat dan menyala lagi saat SAHABAT dimulai ulang.
@@ -195,6 +214,24 @@ dan dinilai seperti kamera. Pilihan ini hanya untuk sesi itu; saat dinyalakan ul
 
 `Mulai SAHABAT (rekam uji).bat` menyalakan mode uji yang **menyimpan video kamera** di `data/rekaman` untuk
 penyetelan. Pakai hanya dengan izin semua orang yang terekam, lalu hapus rekamannya setelah selesai.
+
+**Merekam di sekolah (kamera tinggi).** Rekam uji memakai kamera yang dipilih di **Perangkat**, termasuk IP camera
+atau channel DVR dari panel Kamera, jadi CCTV sekolah bisa direkam langsung (dengan izin). Atur **Posisi kamera**
+sebelum merekam; posisi dan nama kamera tersimpan di `meta.json` rekaman.
+
+1. `Mulai SAHABAT (rekam uji).bat`: peragakan adegan (jatuh, kekerasan, biasa) dan tekan tanda J/K/B sesudah
+   tiap adegan.
+2. `Mulai SAHABAT (rekam kegiatan biasa).bat`: rekam 10 menit kegiatan sehari-hari tanpa adegan, untuk mengukur
+   alarm keliru per jam.
+3. Untuk pengembang:
+
+   ```powershell
+   runtime\python\python.exe -m latih.kamera_tinggi sekolah data\rekaman\<sesi> data\rekaman\<sesi2> --latih
+   ```
+
+   Perintah ini mengukur model sekarang dan model kamera tinggi pada rekaman itu, melatih ulang model kekerasan
+   kamera tinggi dengan rekaman itu (tiap ulangan dinilai model yang tidak melihatnya), lalu menulis laporan di
+   `docs/uji/`. Tambahkan `--pasang` untuk memasang model bila lolos.
 
 ## Cara kerja
 
@@ -293,6 +330,7 @@ sekitar 19 ms untuk dua orang. Bila laptop terlalu lambat, layar menampilkan per
 ISPO-PROYEK/
 ├── Mulai SAHABAT.bat              Menjalankan aplikasi (dan persiapan pertama)
 ├── Mulai SAHABAT (rekam uji).bat  Mode uji dengan perekaman video
+├── Mulai SAHABAT (rekam kegiatan biasa).bat  Rekam kegiatan biasa untuk alarm keliru per jam
 ├── kata-kasar.txt                 Daftar kata untuk peringatan kata kasar
 ├── sahabat/                       Kode aplikasi dan halaman layar guru (sahabat/web)
 ├── models/                        Model pose YOLO11n (OpenVINO) dan penilai jatuh/kekerasan

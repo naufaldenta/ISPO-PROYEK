@@ -10,6 +10,7 @@
   <img id="video" alt="Video kamera dengan kerangka tubuh">
   <div id="grid" hidden aria-label="Kamera CCTV"></div>
   <button id="grid-back" type="button" hidden>Kembali ke grid</button>
+  <p id="asisten-line" role="status" hidden></p>
 
   <div id="top-row">
     <div id="chip"><span id="dot">●</span> <span id="fps">0</span> FPS · <span id="people">0</span> orang</div>
@@ -60,6 +61,10 @@
       </div>
       <p class="device-hint">Video dari folder <strong>video</strong> bisa dipilih di daftar Kamera sebagai pengganti kamera,
         misalnya cadangan bila kamera bermasalah saat demo. Video diputar berulang dan hanya berlaku untuk sesi ini.</p>
+      <label for="posisi-kamera">Posisi kamera</label>
+      <select id="posisi-kamera"></select>
+      <div id="posisi-status" class="device-status" role="status"></div>
+      <div id="asisten-status" class="device-status" role="status"></div>
       <label for="microphone-select">Mikrofon</label>
       <select id="microphone-select" disabled><option>Memuat…</option></select>
       <div id="microphone-status" class="device-status" role="status"></div>
@@ -247,6 +252,12 @@
 
     <form id="kamera-form" autocomplete="off">
       <label>Nama kamera <input id="kamera-nama" maxlength="40" placeholder="misalnya Lorong lantai 1" required></label>
+      <label>Posisi kamera
+        <select id="kamera-posisi">
+          <option value="dada">Setinggi dada/kepala (sekitar 1,2–1,8 m)</option>
+          <option value="tinggi">Tinggi, di pojok atau langit-langit (sekitar 2,2–3 m)</option>
+        </select>
+      </label>
       <div data-only="merek">
         <label>Merek <select id="kamera-merek"></select></label>
         <div class="kamera-row">
