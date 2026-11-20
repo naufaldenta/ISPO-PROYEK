@@ -360,6 +360,10 @@ body.cctv[data-bar="jatuh"] #bar-text, body.cctv[data-bar="kekerasan"] #bar-text
   background: #223042; margin-bottom: 8px; }
 #kamera-dialog #cctv-toggle[data-on="1"] { background: var(--green); }
 #cctv-message { margin: 0; flex: 1 1 220px; }
+.kamera-hitung { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; flex: 1 1 100%; font-size: 13px; }
+#kamera-dialog .kamera-hitung label { margin: 0; flex: 0 0 auto; }
+#kamera-dialog .kamera-hitung select { flex: 0 0 auto; width: auto; }
+#cctv-hitung-info { margin: 0; flex: 1 1 220px; min-width: 0; color: #ccd5df; overflow-wrap: anywhere; }
 .kamera-flags { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; }
 #kamera-dialog .kamera-flags label { display: flex; align-items: center; gap: 6px; font-weight: 400; margin: 0; flex: 0 0 auto; }
 @media (max-width: 640px) {

@@ -70,6 +70,18 @@ def export_all(sizes: tuple[int, ...]) -> None:
         shutil.move(str(exported), str(target))
 
 
+def people_from_result(result) -> list[Person]:
+    """Orang yang dilacak dari Results Ultralytics (dipakai YoloPose dan pose_onnx.OnnxPose)."""
+    boxes, keypoints = result.boxes, result.keypoints
+    if boxes is None or boxes.id is None or keypoints is None or keypoints.conf is None:
+        return []
+    ids = boxes.id.int().tolist()
+    xyxy = boxes.xyxy.cpu().numpy()
+    xy = keypoints.xy.cpu().numpy().astype(np.float32)
+    conf = keypoints.conf.cpu().numpy().astype(np.float32)
+    return [Person(int(ids[i]), xy[i], conf[i], tuple(float(v) for v in xyxy[i])) for i in range(len(ids))]
+
+
 class YoloPose:
     def __init__(self, imgsz: int) -> None:
         from ultralytics import YOLO
@@ -91,14 +103,7 @@ class YoloPose:
         with loader:
             result = self._model.track(frame, persist=True, tracker="bytetrack.yaml",
                                        imgsz=self.imgsz, device="cpu", verbose=False)[0]
-        boxes, keypoints = result.boxes, result.keypoints
-        if boxes is None or boxes.id is None or keypoints is None or keypoints.conf is None:
-            return []
-        ids = boxes.id.int().tolist()
-        xyxy = boxes.xyxy.cpu().numpy()
-        xy = keypoints.xy.cpu().numpy().astype(np.float32)
-        conf = keypoints.conf.cpu().numpy().astype(np.float32)
-        return [Person(int(ids[i]), xy[i], conf[i], tuple(float(v) for v in xyxy[i])) for i in range(len(ids))]
+        return people_from_result(result)
 
 
 class SharedPose:
@@ -145,8 +150,16 @@ class CameraPose:
 
     def __init__(self, shared: SharedPose, cam_id: str) -> None:
         self.shared, self.cam_id = shared, cam_id
+        self._prefetched: tuple | None = None
+
+    def prefetch(self, frame: np.ndarray, people: list[Person]) -> None:
+        """Hasil pose frame ini sudah dihitung runner Mode CCTV (jalur GPU); detect(frame) memakainya sekali."""
+        self._prefetched = (frame, people)
 
     def detect(self, frame: np.ndarray) -> list[Person]:
+        got, self._prefetched = self._prefetched, None
+        if got is not None and got[0] is frame:
+            return got[1]
         return self.shared.detect(self.cam_id, frame)
 
     def reset(self) -> None:

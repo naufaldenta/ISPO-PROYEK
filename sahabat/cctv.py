@@ -22,6 +22,7 @@ from .penjadwal import GerakMurah, KamInfo, Penjadwal
 RED = ("jatuh", "kekerasan")
 SLOW_SUFFIX = " (dinilai lambat)"
 LOST_STEP_S = 0.5           # kamera terputus: mesin diberi tahu sesering ini (pita "kamera terputus")
+FALLBACK_RETRY_S = 2.0      # CPU cadangan gagal dimuat: coba lagi sesudah selang ini (bukan berputar terus)
 MEASURE_ID = "__ukur__"
 SMALL_WIDTH, SMALL_QUALITY = 480, 60
 
@@ -39,6 +40,8 @@ class _Cam:
     signature: tuple
     source: object
     engine: object
+    pose: object = None                                 # CameraPose kamera ini (menerima pose hitungan runner)
+    seen_version: int | None = None                     # versi sumber terakhir yang sudah dinilai
     gerak: GerakMurah = field(default_factory=GerakMurah)
     last_step: float = float("-inf")
     last_lost: float = float("-inf")
@@ -64,8 +67,12 @@ class CctvRunner:
     def __init__(self, cfg, store, shared_pose, riwayat, *, engine_factory: Callable | None = None,
                  source_factory: Callable | None = None, clock: Callable[[], float] = time.monotonic,
                  wall: Callable[[], float] = time.time, connect_timeout_s: float = 10.0,
-                 sleep: Callable[[float], None] = time.sleep, start_thread: bool = True) -> None:
+                 sleep: Callable[[float], None] = time.sleep, start_thread: bool = True,
+                 cpu_fallback: Callable[[], object] | None = None, perangkat: str = "CPU",
+                 pesan_perangkat: str = "") -> None:
         self.cfg, self.store, self.shared_pose, self.riwayat = cfg, store, shared_pose, riwayat
+        self._cpu_fallback = cpu_fallback
+        self.perangkat, self.pesan_perangkat, self.galat_gpu = perangkat, pesan_perangkat, ""
         self._engine_factory = engine_factory or self._default_engine
         self._source_factory = source_factory or self._default_source
         self._clock, self._wall, self._sleep = clock, wall, sleep
@@ -100,9 +107,10 @@ class CctvRunner:
         from .pose import CameraPose
         source = self._source_factory(cam)
         source.start()
-        engine = self._engine_factory(cam, source, CameraPose(self.shared_pose, cam["id"]))
+        pose = CameraPose(self.shared_pose, cam["id"])
+        engine = self._engine_factory(cam, source, pose)
         return _Cam(cam["id"], cam["nama"], bool(cam.get("prioritas")), cam.get("zona"), _signature(cam), source,
-                    engine)
+                    engine, pose)
 
     def _release(self, cam: _Cam) -> None:
         try:
@@ -111,7 +119,8 @@ class CctvRunner:
             log = getattr(cam.engine, "log", None)
             if log is not None:
                 log.close()                     # Riwayat bersama tidak ditutup di sini
-            self.shared_pose.forget(cam.id)
+            if self.shared_pose is not None:            # None: perangkat hitung belum dipilih
+                self.shared_pose.forget(cam.id)
 
     # ---- menyalakan / mematikan ---------------------------------------------------------
     def start(self) -> dict:
@@ -133,7 +142,13 @@ class CctvRunner:
                     self._release_all()
                     raise CctvError("Belum ada kamera CCTV yang tersambung. Periksa panel Kamera.")
                 self._sleep(0.1)
-        self.kapasitas = self._measure(frame)
+        try:
+            self.kapasitas = self._measure(frame)
+        except Exception as exc:
+            if self._cpu_fallback is None:
+                self._release_all()
+                raise
+            self._fall_back(exc, frame)
         self.active = True
         if self._start_thread:
             self._stop.clear()
@@ -195,6 +210,51 @@ class CctvRunner:
         for cam in removed:
             self._release(cam)
 
+    @staticmethod
+    def _short(exc: Exception) -> str:
+        return (str(exc).strip().splitlines() or [type(exc).__name__])[0][:120]
+
+    def _fall_back(self, exc: Exception, frame) -> bool:
+        """Pose GPU melempar galat (driver, GPU dicabut, memori habis): Mode CCTV pindah ke CPU dan tetap memantau.
+        Tidak ada percobaan GPU lagi sampai Mode CCTV dinyalakan ulang. False bila CPU cadangan tidak ada atau belum
+        bisa dimuat (dicoba lagi pada galat berikutnya)."""
+        reason = self._short(exc)
+        make = self._cpu_fallback
+        if make is None:
+            self.galat_gpu = f"GPU bermasalah ({reason}); tidak ada cadangan CPU."
+            print(self.galat_gpu)
+            return False
+        try:
+            new = make()
+        except Exception as load_exc:                   # misalnya memori habis, sama dengan penyebab galat GPU
+            self.galat_gpu = (f"GPU bermasalah ({reason}); CPU belum bisa dimuat ({self._short(load_exc)}), "
+                              "dicoba lagi.")
+            print(self.galat_gpu)
+            return False
+        self._cpu_fallback = None
+        self.galat_gpu = f"GPU bermasalah ({reason}), Mode CCTV pindah ke CPU."
+        print(self.galat_gpu)
+        old = self.shared_pose
+        with self._lock:
+            cams = list(self._cams.values())
+            self.shared_pose, self.perangkat, self.pesan_perangkat = new, "CPU", ""
+            for cam in cams:
+                if cam.pose is not None:
+                    cam.pose.shared = new
+        for cam in cams:
+            try:
+                old.forget(cam.id)
+            except Exception:
+                pass
+            forget_people = getattr(cam.engine, "lupakan_orang", None)
+            if forget_people is not None:
+                forget_people()                     # nomor orang dari pelacak baru mulai lagi dari 1
+        try:
+            self.kapasitas = self._measure(frame)
+        except Exception:
+            self._report("ukur ulang CPU")
+        return True
+
     # ---- satu putaran pekerja -----------------------------------------------------------
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -231,7 +291,7 @@ class CctvRunner:
                 cam.motion = cam.motion or cam.gerak.berubah(got[1])
             infos.append(self._info(cam, now))
         # Satu kamera per putaran, lalu dijadwalkan ulang: kamera prioritas yang jatuh tempo lagi tidak perlu menunggu
-        # semua kamera lain selesai dinilai.
+        # semua kamera lain selesai dinilai. Berlaku juga untuk GPU (batch tidak mempercepat DirectML, lihat pose_onnx).
         for cid in self.penjadwal.pilih(now, infos):
             cam = self._cams.get(cid)
             if cam is None or cid not in packets:
@@ -239,6 +299,16 @@ class CctvRunner:
             version, (frame_t, frame) = packets[cid]
             if frame_t == cam.last_frame_t:
                 continue                                    # belum ada gambar baru dari kamera ini
+            # Pose GPU dihitung di sini, bukan di dalam mesin, supaya galatnya memindahkan Mode CCTV ke CPU (mesin
+            # menelan galat pose). Frame pertama sesudah sumber dibuka ulang dibiarkan ke mesin: mesin me-reset
+            # pelacak dulu, baru menilai.
+            if hasattr(self.shared_pose, "detect_many") and cam.pose is not None and version == cam.seen_version:
+                try:
+                    people = self.shared_pose.detect(cam.id, frame)
+                except Exception as exc:
+                    return 0.0 if self._fall_back(exc, frame) else FALLBACK_RETRY_S
+                cam.pose.prefetch(frame, people)
+            cam.seen_version = version
             cam.last_frame_t, cam.last_step, cam.motion = frame_t, now, False
             cam.step_times.append(now)
             self._step(cam, frame_t, frame, version)
@@ -326,7 +396,8 @@ class CctvRunner:
             bar, text = "aman", BAR_TEXT["aman"]
         return {"aktif": self.active, "bar": bar, "text": text, "fps": round(statistics.mean(fps), 1) if fps else 0.0,
                 "people": people, "alarm_seq": seq, "alarm_kamera": alarms[0].id if alarms else None,
-                "alarm_list": [c.id for c in alarms], "kapasitas": self.kapasitas,
+                "alarm_list": [c.id for c in alarms], "kapasitas": self.kapasitas, "perangkat": self.perangkat,
+                "galat_gpu": self.galat_gpu, "pesan_perangkat": self.pesan_perangkat,
                 "lambat": any(r["status"] == "lambat" for r in rows), "kamera": rows}
 
     def has_unacked(self, cam_id: str | None = None) -> bool:
@@ -387,10 +458,18 @@ class ModeControl:
         snap = self.cctv.snapshot()
         full = sum(1 for c in snap["kamera"] if c["status"] == "penuh")
         pesan = f"Mode CCTV aktif: {len(snap['kamera'])} kamera, {full} dinilai penuh"
+        perangkat = snap.get("perangkat") or "CPU"
+        if perangkat.startswith("GPU (") and perangkat.endswith(")"):
+            perangkat = "GPU: " + perangkat[5:-1] + ","        # "GPU (DirectML #1)" -> "GPU: DirectML #1,"
+        else:
+            perangkat += ":"
         if snap.get("kapasitas") is not None and snap["kapasitas"] < 1:
             pesan += ". Komputer ini belum sanggup menilai satu kamera penuh 10 kali per detik"
         elif snap.get("kapasitas") is not None:
-            pesan += f". Komputer ini sanggup menilai {snap['kapasitas']} kamera penuh sekaligus"
+            pesan += f". {perangkat} sanggup menilai {snap['kapasitas']} kamera penuh sekaligus"
+        extras = [e.rstrip(".") for e in (snap.get("pesan_perangkat"), snap.get("galat_gpu")) if e]
+        if extras:
+            pesan += ". " + ". ".join(extras) + "."
         return {**snap, "hidup": True, "pesan": pesan}
 
     def _pameran_alarm(self) -> bool:

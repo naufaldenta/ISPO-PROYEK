@@ -2,6 +2,7 @@
 import json
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -144,7 +145,7 @@ def test_switch_to_cctv_and_back_restores_webcam(mode_env):                     
     st = mode.set_cctv(True)
     assert st["hidup"] and engine.paused and engine.source.stopped and runner.started
     assert st["pesan"] == ("Mode CCTV aktif: 2 kamera, 1 dinilai penuh. "
-                           "Komputer ini sanggup menilai 1 kamera penuh sekaligus")
+                           "CPU: sanggup menilai 1 kamera penuh sekaligus")
     mode.set_cctv(False)
     assert not engine.paused and engine.source.started_again and runner.stopped
     assert mode.remembered == [True, False] and not mode.status()["hidup"]
@@ -289,3 +290,106 @@ def test_tile_snapshot_is_a_single_short_response(app_cctv):                    
         assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content.startswith(b"\xff\xd8")
         assert r.headers["cache-control"] == "no-store" and runner.small_requests[-1] == ("k2", True)
         assert c.get("/video/gambar?kamera=tidakada&kecil=1").status_code in (200, 404)
+
+
+def test_status_names_the_compute_device(mode_env):
+    mode, engine, runner = mode_env()
+    original = runner.snapshot
+    mode.set_cctv(True)
+    runner.snapshot = lambda: {**original(), "kapasitas": 3, "perangkat": "GPU (DirectML #1)", "galat_gpu": "",
+                               "pesan_perangkat": ""}
+    assert "GPU: DirectML #1, sanggup menilai 3 kamera penuh sekaligus" in mode.status()["pesan"]
+    runner.snapshot = lambda: {**original(), "kapasitas": 1, "perangkat": "CPU",
+                               "galat_gpu": "GPU bermasalah (rusak), Mode CCTV pindah ke CPU.", "pesan_perangkat": ""}
+    st = mode.status()["pesan"]
+    assert "CPU: sanggup menilai 1 kamera penuh sekaligus" in st and st.endswith("Mode CCTV pindah ke CPU.")
+    runner.snapshot = lambda: {**original(), "kapasitas": 1, "perangkat": "CPU", "galat_gpu": "GPU bermasalah (x), Mode CCTV pindah ke CPU.",
+                               "pesan_perangkat": "Catatan satu."}
+    assert mode.status()["pesan"].endswith("sekaligus. Catatan satu. GPU bermasalah (x), Mode CCTV pindah ke CPU.")
+    runner.snapshot = lambda: {**original(), "kapasitas": 2, "perangkat": "GPU (DirectML #0)", "galat_gpu": "",
+                               "pesan_perangkat": "GPU dipakai walau belum lolos uji kesetaraan; hasilnya bisa sedikit berbeda dari CPU."}
+    assert "belum lolos uji kesetaraan" in mode.status()["pesan"]
+
+
+class _Pose:
+    def __init__(self, ms, clock, nama):
+        self.ms, self.clock, self.nama = ms, clock, nama
+
+    def detect(self, cam_id, frame):
+        self.clock.t += self.ms / 1000
+        return []
+
+    def forget(self, cam_id):
+        pass
+
+
+def test_choose_compute_caches_and_rechooses(monkeypatch):
+    from sahabat import perangkat_hitung as ph
+    clock = SimpleNamespace(t=0.0)
+    monkeypatch.setattr(ph, "_clock", lambda: clock.t)
+    made, saved = [], []
+
+    def gpu(device_id):
+        if device_id != 1:
+            raise RuntimeError("tidak ada")
+        made.append(device_id)
+        return _Pose(9, clock, "GPU (DirectML #1)")
+    cpu_pose = _Pose(60, clock, "CPU (OpenVINO)")
+    cfg, cache, frame = Config(hitung="otomatis"), {}, np.zeros((8, 8, 3), np.uint8)
+    kw = dict(cpu_factory=lambda: cpu_pose, gpu_factory=gpu, lolos=True, save=lambda ms, i: saved.append((ms, i)))
+    first = server.choose_compute(cfg, frame, cache, **kw)
+    assert first.jenis == "gpu" and first.device_id == 1 and saved == [(9.0, 1)]
+    assert server.choose_compute(cfg, frame, cache, **kw) is first and made == [1]      # model dibuat sekali
+    cfg.hitung = "cpu"
+    assert server.choose_compute(cfg, frame, cache, **kw).pose is cpu_pose
+    cfg.hitung = "otomatis"
+    again = server.choose_compute(cfg, frame, cache, **kw)
+    cache["gagal"] = True
+    assert server.choose_compute(cfg, frame, cache, **kw) is not again                   # GPU bermasalah: pilih ulang
+    cfg.hitung = "ngawur"
+    assert server.choose_compute(cfg, frame, cache, **kw).jenis == "gpu"                 # nilai rusak = otomatis
+
+
+def test_runner_without_chosen_pose_releases_cleanly(tmp_path):
+    from sahabat.cctv import CctvRunner
+    store = _store(tmp_path)
+    src = SimpleNamespace(start=lambda: None, stop=lambda: None, read=lambda: None)
+    runner = CctvRunner(Config(), store, None, None, engine_factory=lambda cam, s, p: SimpleNamespace(log=None),
+                        source_factory=lambda cam: src, connect_timeout_s=0.0, sleep=lambda s: None,
+                        start_thread=False)
+    with pytest.raises(CctvError):
+        runner.start()
+
+
+def test_compute_choice_is_saved_and_laptop_only(app_cctv, monkeypatch):
+    from sahabat import perangkat_hitung as ph
+    app, runner = app_cctv
+    saved = []
+    monkeypatch.setattr(server, "remember_hitung", saved.append)
+    monkeypatch.setattr(ph, "nama_gpu", lambda: ["AMD Radeon(TM) Vega 8 Graphics"])
+    monkeypatch.setattr(ph, "dml_tersedia", lambda: False)
+    monkeypatch.setattr(ph, "baca_kesetaraan", lambda nama, imgsz: None)
+    runner.perangkat = "GPU (DirectML #1)"
+    with TestClient(app) as c:
+        info = c.get("/api/cctv/hitung").json()
+        assert info["hitung"] in ("otomatis", "gpu", "cpu") and info["gpu"] == ["AMD Radeon(TM) Vega 8 Graphics"]
+        assert info["dml"] is False and info["lolos"] is None and isinstance(info["model_onnx"], bool)
+        assert info["aktif"] == "GPU (DirectML #1)"
+        r = c.post("/api/cctv/hitung", json={"hitung": "gpu"})
+        assert r.json()["ok"] and saved == ["gpu"] and "Berlaku saat Mode CCTV dinyalakan berikutnya" in r.json()["pesan"]
+        assert c.get("/api/cctv/hitung").json()["hitung"] == "gpu"
+        assert c.post("/api/cctv/hitung", json={"hitung": "tpu"}).status_code == 400
+    with TestClient(app, client=("192.168.1.50", 5000)) as p:
+        p.cookies.set(COOKIE, "ABCD2345")
+        assert p.post("/api/cctv/hitung", json={"hitung": "cpu"}).status_code == 403
+    assert saved == ["gpu"]
+
+
+def test_compute_choice_while_cctv_off_says_it_applies_on_next_start(mode_env, monkeypatch, tmp_path):
+    mode, engine, runner = mode_env()
+    monkeypatch.setattr(server, "remember_hitung", lambda v: None)
+    app = create_app(engine, lan=FakeLan(), kamera=_store(tmp_path), mode=mode)
+    with TestClient(app) as c:
+        r = c.post("/api/cctv/hitung", json={"hitung": "cpu"}).json()
+        assert r["ok"] and engine.cfg.hitung == "cpu" and "Berlaku saat Mode CCTV dinyalakan" in r["pesan"]
+        assert c.get("/api/cctv/hitung").json()["aktif"] is None

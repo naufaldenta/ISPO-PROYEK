@@ -118,17 +118,75 @@ def remember_cctv(on: bool) -> None:
     update_local(SETTINGS_PATH, cctv_enabled=bool(on))
 
 
-def build_mode(cfg: Config, engine):
-    """ModeControl nyata: model pose kedua untuk Mode CCTV dibuat sekali, saat Mode CCTV pertama kali dinyalakan."""
-    from .cctv import CctvRunner, ModeControl
+def choose_compute(cfg: Config, frame, cache: dict, *, cpu_factory=None, gpu_factory=None, alasan_gpu=None,
+                   lolos=None, save=None):
+    """Perangkat hitung Mode CCTV menurut cfg.hitung (otomatis / gpu / cpu), diukur pada gambar kamera sungguhan.
+
+    Model pose dibuat sekali dan disimpan di `cache`; pilihan diulang bila cfg.hitung berubah atau GPU bermasalah
+    pada sesi sebelumnya (cache["gagal"]).
+    """
+    from . import perangkat_hitung as ph
     from .pose import SharedPose, YoloPose
-    shared: dict = {}
+    mode = cfg.hitung if cfg.hitung in ph.HITUNG else "otomatis"
+    imgsz = cfg.imgsz or cfg.imgsz_candidates[-1]
+    cached = cache.get("pilihan")
+    if cached is not None and cache.get("mode") == mode and not cache.get("gagal"):
+        return cached
+
+    def cpu():
+        if "cpu" not in cache:
+            cache["cpu"] = SharedPose(YoloPose(imgsz))
+        return cache["cpu"]
+    if gpu_factory is None and mode != "cpu":
+        gpu_factory, found = ph.gpu_factory_bawaan(imgsz=imgsz)
+        alasan_gpu = alasan_gpu if alasan_gpu is not None else found
+    pilihan = ph.pilih(mode, cpu_factory=cpu_factory or cpu, gpu_factory=gpu_factory, frame=frame,
+                       lolos=ph.baca_kesetaraan(ph.nama_gpu(), imgsz) if lolos is None else lolos,
+                       alasan_gpu=alasan_gpu or "")
+    cache.update(pilihan=pilihan, mode=mode, gagal=False)
+    cache["cpu_factory"] = cpu_factory or cpu
+    if pilihan.jenis == "gpu":
+        try:
+            (save or _remember_gpu)(round(pilihan.ms, 1), pilihan.device_id)
+        except OSError:
+            pass
+    return pilihan
+
+
+def _remember_gpu(ms: float, device_id: int | None) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, gpu_ms=ms, gpu_id=device_id)
+
+
+def build_mode(cfg: Config, engine):
+    """ModeControl nyata. Perangkat hitung (GPU tercepat atau CPU) dipilih saat Mode CCTV dinyalakan, dengan gambar
+    pertama dari kamera aktif; model pose dibuat sekali."""
+    from .cctv import CctvRunner, ModeControl
+    cache: dict = {}
+
+    class Runner(CctvRunner):
+        def _measure(self, frame) -> int:
+            if self.shared_pose is None:
+                pilihan = choose_compute(cfg, frame, cache)
+                self.shared_pose, self.perangkat, self.pesan_perangkat = pilihan.pose, pilihan.nama, pilihan.pesan
+                self._cpu_fallback = cache["cpu_factory"] if pilihan.jenis == "gpu" else None
+                with self._lock:
+                    for cam in self._cams.values():
+                        cam.pose.shared = pilihan.pose
+            return super()._measure(frame)
+
+        def _fall_back(self, exc, frame) -> None:
+            cache["gagal"] = True                    # sesi berikutnya memilih ulang (mungkin GPU sudah pulih)
+            super()._fall_back(exc, frame)
 
     def make_runner():
-        if "pose" not in shared:
-            shared["pose"] = SharedPose(YoloPose(cfg.imgsz or cfg.imgsz_candidates[-1]))
-        return CctvRunner(cfg, default_store(), shared["pose"], getattr(engine, "riwayat", None))
+        return Runner(cfg, default_store(), None, getattr(engine, "riwayat", None))
     return ModeControl(engine, make_runner, remember_cctv)
+
+
+def remember_hitung(value: str) -> None:
+    from .config import SETTINGS_PATH, update_local
+    update_local(SETTINGS_PATH, hitung=value)
 
 
 def remember_flip(on: bool) -> None:
@@ -183,7 +241,7 @@ def _local_only(method: str, path: str) -> bool:
     """Pengaturan yang hanya boleh diubah dari laptop SAHABAT sendiri, bukan dari HP atau laptop lain."""
     if path.startswith("/api/jaringan") or path.startswith("/api/kamera"):
         return True
-    if method == "POST" and path == "/api/cctv":
+    if method == "POST" and path in ("/api/cctv", "/api/cctv/hitung"):
         return True
     if path.startswith("/api/riwayat/") and ((method == "POST" and path.endswith("/tindak"))
                                              or (method == "GET" and path.endswith("/unduh"))):
@@ -430,6 +488,49 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             return {"ok": True, **await run_in_threadpool(mode.set_cctv, on)}
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    gpu_names: dict = {}
+
+    def compute_info() -> dict:
+        from . import perangkat_hitung as ph
+        from .pose_onnx import ONNX_MODEL
+        if "gpu" not in gpu_names:
+            gpu_names["gpu"] = ph.nama_gpu()          # PowerShell ±1 dtk: cukup sekali per sesi
+        cfg = getattr(engine, "cfg", None)
+        hitung = getattr(cfg, "hitung", "otomatis")
+        on = mode is not None and mode.hidup
+        imgsz = (getattr(cfg, "imgsz", None) or Config().imgsz_candidates[-1]) if cfg is not None else 416
+        return {"ok": True, "hitung": hitung if hitung in ph.HITUNG else "otomatis", "gpu": gpu_names["gpu"],
+                "dml": ph.dml_tersedia(), "model_onnx": ONNX_MODEL.exists(),
+                "lolos": ph.baca_kesetaraan(gpu_names["gpu"], imgsz),
+                "aktif": getattr(mode.cctv, "perangkat", None) if on else None}
+
+    @app.get("/api/cctv/hitung")
+    async def compute_get():
+        return await run_in_threadpool(compute_info)
+
+    @app.post("/api/cctv/hitung")
+    async def compute_set(request: Request):
+        """Perangkat hitung Mode CCTV (otomatis / gpu / cpu). Berlaku saat Mode CCTV dinyalakan berikutnya."""
+        from .perangkat_hitung import HITUNG
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        value = body.get("hitung") if isinstance(body, dict) else None
+        if value not in HITUNG:
+            return JSONResponse({"ok": False, "error": "Pilih otomatis, gpu, atau cpu."}, status_code=400)
+        cfg = getattr(engine, "cfg", None)
+        if cfg is not None:
+            cfg.hitung = value
+        try:
+            await run_in_threadpool(remember_hitung, value)
+        except OSError:
+            pass                                    # tetap berlaku untuk sesi ini
+        pesan = "Tersimpan. Berlaku saat Mode CCTV dinyalakan berikutnya."
+        if mode is not None and mode.hidup:
+            pesan = "Tersimpan. Berlaku saat Mode CCTV dinyalakan berikutnya (matikan lalu nyalakan lagi)."
+        return {**await run_in_threadpool(compute_info), "pesan": pesan}
 
     @app.post("/api/tanda")
     async def mark(request: Request):

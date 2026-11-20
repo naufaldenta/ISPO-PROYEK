@@ -196,6 +196,9 @@ def app():
     listener = StubListener()
     # panel "HP / laptop lain" ikut tampil; server keduanya hanya di 127.0.0.1 supaya tidak memicu firewall
     server.remember_lan = lambda on, code: None             # jangan menulis ke pengaturan laptop sungguhan
+    server.remember_hitung = lambda value: None
+    from sahabat.config import Config
+    engine.cfg = Config()                                   # pilihan perangkat hitung Mode CCTV
     lan = LanServer(0, "ABCD2345", host="127.0.0.1", addresses=lambda: ["192.168.1.13"])
     import tempfile
     from pathlib import Path

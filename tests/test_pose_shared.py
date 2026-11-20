@@ -20,6 +20,7 @@ class FakeYoloPose:
     def __init__(self):
         self._model = SimpleNamespace(predictor=None)
         self.used_tracker_ids = []
+        self._alive = []             # pelacak lama tetap hidup supaya id() tidak dipakai ulang oleh objek baru
         self.imgsz = 320
 
     def detect(self, frame):
@@ -28,6 +29,7 @@ class FakeYoloPose:
         pred = self._model.predictor
         if not pred.trackers:
             pred.trackers = [object()]
+        self._alive.append(pred.trackers[0])
         self.used_tracker_ids.append(id(pred.trackers[0]))
         return []
 
@@ -84,3 +86,15 @@ def test_interleaved_cameras_match_single_camera_exactly():
         for p, q in zip(ps, qs):
             np.testing.assert_allclose(p.kp, q.kp, atol=1e-4)
             np.testing.assert_allclose(p.box, q.box, atol=1e-3)
+
+
+def test_camera_pose_uses_prefetched_result_once():
+    fake = FakeYoloPose()
+    shared = SharedPose(fake)
+    cam = CameraPose(shared, "k1")
+    other = FRAME.copy()
+    cam.prefetch(FRAME, ["hasil"])
+    assert cam.detect(other) == [] and len(fake.used_tracker_ids) == 1     # frame lain: dinilai sendiri
+    cam.prefetch(FRAME, ["hasil"])
+    assert cam.detect(FRAME) == ["hasil"] and len(fake.used_tracker_ids) == 1
+    assert cam.detect(FRAME) == [] and len(fake.used_tracker_ids) == 2      # hasil prefetch hanya sekali

@@ -111,6 +111,24 @@ class FakeShared:
         self.forgotten.append(cam_id)
 
 
+class FakeBatchShared(FakeShared):
+    """Pose GPU tiruan: semua kamera dalam satu panggilan; `fail` membuat panggilan berikutnya melempar galat."""
+
+    def __init__(self, clock, cost=0.02):
+        super().__init__(clock, cost)
+        self.batch_sizes, self.fail = [], None
+
+    def detect_many(self, frames):
+        if self.fail is not None:
+            raise self.fail
+        self.clock.advance(self.cost)
+        self.batch_sizes.append(len(frames))
+        return {cid: [] for cid in frames}
+
+    def detect(self, cam_id, frame):
+        return self.detect_many({cam_id: frame})[cam_id]
+
+
 def write_store(tmp_path, ids, names=None):
     items = [{"id": i, "nama": (names or {}).get(i, "Kamera " + i), "jenis": "alamat",
               "alamat": f"rtsp://10.0.0.{n + 1}/x", "pengguna": "", "sandi": "", "aktif": True, "prioritas": False,
@@ -121,7 +139,8 @@ def write_store(tmp_path, ids, names=None):
 
 @pytest.fixture
 def fake_clock_runner(tmp_path):
-    def make(ids, people=None, names=None, connected=True, step_cost_s=0.005, connect_timeout_s=10.0, start=True):
+    def make(ids, people=None, names=None, connected=True, step_cost_s=0.005, connect_timeout_s=10.0, start=True,
+             batch=False):
         clock = FakeClock()
         store = write_store(tmp_path, ids, names)
         engines, sources = {}, {}
@@ -137,9 +156,20 @@ def fake_clock_runner(tmp_path):
             engines[cam["id"]] = eng
             return eng
 
-        runner = CctvRunner(Config(), store, FakeShared(clock), riwayat=None, engine_factory=engine_factory,
-                            source_factory=source_factory, clock=clock, wall=lambda: 1_800_000_000.0,
-                            connect_timeout_s=connect_timeout_s, sleep=clock.advance, start_thread=False)
+        cpu_poses = []
+
+        def cpu_fallback():
+            pose = FakeShared(clock)
+            cpu_poses.append(pose)
+            return pose
+
+        extra = {"cpu_fallback": cpu_fallback, "perangkat": "GPU (DirectML #1)",
+                 "pesan_perangkat": "GPU dipakai walau belum lolos uji kesetaraan."} if batch else {}
+        runner = CctvRunner(Config(), store, FakeBatchShared(clock) if batch else FakeShared(clock), riwayat=None,
+                            engine_factory=engine_factory, source_factory=source_factory, clock=clock,
+                            wall=lambda: 1_800_000_000.0, connect_timeout_s=connect_timeout_s, sleep=clock.advance,
+                            start_thread=False, **extra)
+        runner.cpu_poses = cpu_poses
         runner.store, runner.sources, runner.sources_created = store, sources, sources
 
         def run_for(seconds):
@@ -147,6 +177,7 @@ def fake_clock_runner(tmp_path):
             while clock.now < end:
                 clock.advance(max(runner._cycle(clock.now), 0.001))
         runner.run_for = run_for
+        runner.clock_advance = clock.advance
         if start:
             runner.start()
         return runner, engines
@@ -327,3 +358,91 @@ def test_starved_camera_is_reported_slow_not_full(fake_clock_runner):           
     status = {c["id"]: (c["status"], c["fps"]) for c in runner.snapshot()["kamera"]}
     assert status["k2"][0] == "lambat" and status["k2"][1] < 8
     assert k3_first >= 1 and len(engines["k3"].steps) > k3_first          # pengaman 5 dtk tetap jalan
+
+
+def test_gpu_backend_keeps_priority_camera_at_full_rate(fake_clock_runner):            # Final #4
+    """GPU tidak boleh membuat kamera prioritas ikut melambat: satu kamera per putaran seperti jalur CPU."""
+    ids = ["k1", "k2", "k3", "k4"]
+    runner, engines = fake_clock_runner(ids, people={i: 1 for i in ids}, batch=True, step_cost_s=0.03)
+    runner.store.set_flags("k1", prioritas=True)
+    runner.reload()
+    runner.run_for(2.0)
+    assert len(engines["k1"].steps) >= 17                       # ±10 penilaian/dtk
+    assert runner.snapshot()["perangkat"] == "GPU (DirectML #1)" and runner.snapshot()["galat_gpu"] == ""
+
+
+def test_gpu_people_are_handed_to_the_camera_pose(fake_clock_runner):
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True)
+    runner.run_for(0.3)                                         # versi sumber sudah terlihat
+    cam = runner._cams["k1"]
+    got = []
+    cam.engine.step = lambda t, frame, input_version=None: got.append(cam.pose.detect(frame))
+    runner.shared_pose.detect_many = lambda frames: {cid: ["orang-" + cid] for cid in frames}
+    runner.shared_pose.detect = lambda cid, frame: ["dari-runner-" + cid]
+    runner._cycle(runner._clock())
+    assert got == [["dari-runner-k1"]]                          # dihitung runner (galat GPU tertangkap di sana)
+
+
+def test_reopened_camera_is_not_prefetched_with_old_tracker(fake_clock_runner):         # Final #8
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True)
+    runner.run_for(0.3)
+    cam = runner._cams["k1"]
+    prefetched = []
+    original = cam.pose.prefetch
+    cam.pose.prefetch = lambda frame, people: prefetched.append(1) or original(frame, people)
+    runner.sources["k1"].version += 1                           # kamera dibuka ulang: mesin me-reset pelacak
+    runner.clock_advance(0.2)
+    runner._cycle(runner._clock())
+    assert prefetched == []
+    runner.clock_advance(0.2)
+    runner._cycle(runner._clock())
+    assert prefetched == [1]
+
+
+def test_cpu_fallback_that_fails_to_load_is_retried_without_spinning(fake_clock_runner):   # Final #7
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True)
+    runner.run_for(0.3)
+    calls = []
+    good = runner._cpu_fallback
+
+    def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise MemoryError("memori habis")
+        return good()
+    runner._cpu_fallback = flaky
+    runner.shared_pose.fail = RuntimeError("DXGI_ERROR_DEVICE_REMOVED")
+    wait = runner._cycle(runner._clock())
+    assert wait >= 1.0 and "CPU belum bisa dimuat" in runner.snapshot()["galat_gpu"]
+    runner.run_for(3.0)
+    assert len(calls) == 2 and runner.snapshot()["perangkat"] == "CPU"
+
+
+def test_gpu_error_falls_back_to_cpu_and_keeps_watching(fake_clock_runner):            # Review Focus 2
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True)
+    runner.run_for(0.5)
+    runner.shared_pose.fail = RuntimeError("DXGI_ERROR_DEVICE_REMOVED")
+    before = len(engines["k1"].steps)
+    runner.run_for(1.0)
+    s = runner.snapshot()
+    assert s["perangkat"] == "CPU" and s["galat_gpu"].startswith("GPU bermasalah (DXGI_ERROR_DEVICE_REMOVED")
+    assert s["galat_gpu"].endswith("Mode CCTV pindah ke CPU.")
+    assert s["pesan_perangkat"] == ""                    # peringatan GPU lama tidak berlaku lagi
+    assert len(engines["k1"].steps) - before >= 8 and len(runner.cpu_poses) == 1
+    assert runner.shared_pose is runner.cpu_poses[0] and s["kapasitas"] is not None
+    assert all(cam.pose.shared is runner.cpu_poses[0] for cam in runner._cams.values())
+
+
+def test_gpu_error_while_measuring_at_start_falls_back(fake_clock_runner):
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True, start=False)
+    runner.shared_pose.fail = RuntimeError("E_OUTOFMEMORY")
+    s = runner.start()
+    assert s["perangkat"] == "CPU" and "E_OUTOFMEMORY" in s["galat_gpu"] and len(runner.cpu_poses) == 1
+
+
+def test_without_fallback_gpu_error_is_reported_not_fatal(fake_clock_runner):
+    runner, engines = fake_clock_runner(["k1"], people={"k1": 1}, batch=True)
+    runner._cpu_fallback = None
+    runner.shared_pose.fail = RuntimeError("rusak")
+    runner.run_for(0.3)
+    assert "rusak" in runner.snapshot()["galat_gpu"]

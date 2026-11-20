@@ -121,7 +121,47 @@
 
   async function loadCctv() {
     try { showCctv(await api("/api/cctv")); } catch (error) { $("cctv-message").textContent = error.message; }
+    loadHitung();
   }
+
+  // ---- perangkat hitung Mode CCTV (GPU / CPU) ----
+  function hitungText(info) {
+    const parts = [
+      info.gpu.length ? "GPU terdeteksi: " + info.gpu.join(", ") : "GPU tidak terdeteksi",
+      "paket GPU: " + (info.dml ? "terpasang" : "belum terpasang"),
+      "uji kesetaraan: " + (info.lolos === true ? "lolos" : info.lolos === false ? "belum lolos"
+        : "belum diuji di GPU dan resolusi ini"),
+    ];
+    let text = parts.join(" · ") + ".";
+    if (!info.dml) text += " Jalankan scripts\\siapkan_gpu.ps1 untuk memasang paket GPU.";
+    else if (!info.model_onnx) text += " Model GPU belum ada; jalankan scripts\\siapkan_gpu.ps1 lagi.";
+    if (info.aktif) text += " Sedang dipakai: " + info.aktif + ".";
+    return text;
+  }
+
+  async function loadHitung() {
+    try {
+      const info = await api("/api/cctv/hitung");
+      $("cctv-hitung").value = info.hitung;
+      $("cctv-hitung-info").textContent = hitungText(info);
+    } catch (error) {
+      $("cctv-hitung-info").textContent = error.message;
+    }
+  }
+
+  $("cctv-hitung").addEventListener("change", async () => {
+    const select = $("cctv-hitung");
+    select.disabled = true;
+    try {
+      const info = await post("/api/cctv/hitung", { hitung: select.value });
+      $("cctv-hitung-info").textContent = info.pesan + " " + hitungText(info);
+    } catch (error) {
+      $("cctv-hitung-info").textContent = error.message;
+      loadHitung();
+    } finally {
+      select.disabled = busy;
+    }
+  });
 
   $("cctv-toggle").addEventListener("click", async () => {
     const on = $("cctv-toggle").dataset.on !== "1";

@@ -105,6 +105,16 @@ class Engine:
 
     # ---- satu putaran penilaian -------------------------------------------------
 
+    def lupakan_orang(self) -> None:
+        """Nomor orang dari pelacak mulai lagi dari 1 (Mode CCTV pindah dari GPU ke CPU): riwayat gerak lama
+        dibuang supaya orang baru bernomor sama tidak mewarisi gerakan orang lain. Alarm yang menyala tetap."""
+        if hasattr(self.pose, "reset"):
+            self.pose.reset()
+        with self._lock:
+            self.history = History(self.cfg)
+            self.fall = FallDetector(self.cfg, self._fall_model_path)
+            self.gestures.reset()
+
     def step(self, t: float, frame: np.ndarray | None, input_version: int | None = None) -> Snapshot:
         """Satu putaran. frame None berarti kamera terputus.
 

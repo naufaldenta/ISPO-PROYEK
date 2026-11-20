@@ -206,6 +206,15 @@
     <div class="kamera-cctv">
       <button id="cctv-toggle" type="button" data-on="0">Mode CCTV: mati</button>
       <p id="cctv-message" role="status" aria-live="polite">Mode CCTV menilai semua kamera aktif sekaligus dalam grid.</p>
+      <div class="kamera-hitung">
+        <label for="cctv-hitung">Perangkat hitung</label>
+        <select id="cctv-hitung">
+          <option value="otomatis">Otomatis</option>
+          <option value="gpu">GPU</option>
+          <option value="cpu">CPU</option>
+        </select>
+        <p id="cctv-hitung-info" role="status" aria-live="polite"></p>
+      </div>
     </div>
     <h3>Kamera tersimpan</h3>
     <ul id="kamera-list"></ul>

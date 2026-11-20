@@ -39,9 +39,25 @@ if (-not (Test-Path $py)) {
 Write-Host "[2/3] Memasang pustaka (paling lama, sekitar 1 GB) ..."
 & $py -m pip install --disable-pip-version-check --no-warn-script-location --quiet --upgrade pip
 Assert-Ok "pip upgrade"
+# Paket GPU (onnxruntime-directml) menggantikan onnxruntime biasa; keduanya menulis folder onnxruntime/. pip tetap
+# memasang onnxruntime biasa (faster-whisper memintanya dengan nama itu), jadi bila paket GPU sudah ada, paket GPU
+# dipasang ulang sesudahnya. Pengecekan tanpa "2>$null": di PowerShell 5.1 itu menghentikan skrip (mode Stop).
+function Test-Package($name) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $py -c "import importlib.metadata as m, sys; m.version(sys.argv[1])" $name *> $null; return ($LASTEXITCODE -eq 0) }
+    finally { $ErrorActionPreference = $old }
+}
+$hasGpuPackage = Test-Package "onnxruntime-directml"
 & $py -m pip install --disable-pip-version-check --no-warn-script-location --no-cache-dir `
     -r (Join-Path $root "requirements.lock") --extra-index-url $torchIndex
 Assert-Ok "pasang pustaka"
+if ($hasGpuPackage) {
+    & $py -m pip uninstall -y onnxruntime onnxruntime-directml
+    & $py -m pip install --disable-pip-version-check --no-warn-script-location --no-cache-dir --no-deps `
+        -r (Join-Path $root "requirements-gpu.lock")
+    Assert-Ok "pasang ulang paket GPU"
+}
 
 Write-Host "[3/3] Memeriksa pemasangan ..."
 & $py -c "import ultralytics, openvino, cv2, sklearn, fastapi, uvicorn, faster_whisper, sounddevice"
@@ -49,3 +65,14 @@ Assert-Ok "periksa pustaka"
 
 Set-Content -Path $marker -Value "runtime siap $(Get-Date -Format s)" -Encoding ascii
 Write-Host "Runtime siap di $runtime"
+
+# Paket GPU untuk Mode CCTV: ditanyakan sekali bila ada kartu grafis. Gagal atau dilewati tidak mengganggu runtime.
+if (-not $hasGpuPackage) {
+    $gpus = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch "Microsoft Basic" })
+    if ($gpus.Count -gt 0) {
+        $answer = Read-Host "Pasang paket GPU (sekitar 20 MB) untuk Mode CCTV? (Y/N)"
+        if ($answer -match '^[Yy]') {
+            try { & (Join-Path $PSScriptRoot "siapkan_gpu.ps1") -Ya } catch { Write-Host "Paket GPU belum terpasang: $_" }
+        }
+    }
+}

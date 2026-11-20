@@ -142,10 +142,32 @@ tempat rawan (misalnya tangga): kamera itu didahulukan bila komputer kewalahan.
 
 Setiap kamera dinilai dengan model dan pelacak yang sama persis dengan Mode Pameran, jadi akurasi per kamera tidak
 berubah selama kamera itu dinilai penuh. Yang membatasi adalah tenaga komputer. Saat Mode CCTV dinyalakan, SAHABAT
-mengukur komputernya dan menuliskan, misalnya, "Komputer ini sanggup menilai 1 kamera penuh sekaligus". Laptop tanpa
+mengukur komputernya dan menuliskan, misalnya, "CPU (OpenVINO): sanggup menilai 1 kamera penuh sekaligus". Laptop tanpa
 kartu grafis biasanya hanya sanggup menilai **satu** kamera penuh sekaligus. Beberapa kamera tetap bisa dipantau karena
 kamera kosong hampir tidak memakai tenaga, tetapi bila dua kamera ramai bersamaan, keduanya menjadi **lambat**. Untuk
 pemasangan sungguhan dengan lebih dari 2 kamera, pakai komputer dengan kartu grafis.
+
+**Kartu grafis (GPU) untuk Mode CCTV.** Mode CCTV bisa menjalankan model pose di kartu grafis NVIDIA, AMD, atau Intel
+lewat DirectML. Mode Pameran tidak berubah dan tetap memakai CPU. Pilihannya ada di panel **Kamera**, **Perangkat hitung**:
+
+| Pilihan | Yang dipakai |
+|---|---|
+| **Otomatis** (bawaan) | GPU tercepat, hanya bila sudah lolos uji kesetaraan dan memang lebih cepat dari CPU. Selain itu CPU |
+| **GPU** | GPU tercepat walau belum lolos uji kesetaraan (ada peringatan). Bila GPU tidak ada, CPU dengan alasannya |
+| **CPU** | Selalu CPU (OpenVINO), sama dengan Mode Pameran |
+
+Pilihan berlaku saat Mode CCTV dinyalakan berikutnya. Laptop gaming sering punya dua kartu grafis (bawaan prosesor dan
+GPU gaming). SAHABAT mencoba keduanya dan memakai yang tercepat. Bila GPU bermasalah saat berjalan (driver, kabel eGPU
+dicabut, memori habis), Mode CCTV pindah ke CPU tanpa berhenti memantau dan menuliskan alasannya.
+
+Memasang paket GPU (sekali, sekitar 20 MB): saat penyalaan pertama SAHABAT menanyakannya bila ada kartu grafis, atau
+jalankan `scripts\siapkan_gpu.ps1`. Laptop pameran tanpa internet: jalankan skrip itu di rumah, lalu salin seluruh
+folder SAHABAT lewat flashdisk.
+
+GPU mempercepat langkah pose saja. Penilaian jatuh dan kekerasan (ciri gerak dan model kecil) tetap berjalan di CPU,
+sekitar 30 ms per kamera di laptop pengembang. Jadi walau GPU-nya sangat cepat, batasnya sekitar 3 kamera penuh
+sekaligus; prosesor yang lebih cepat menaikkan batas itu, dan kamera yang kosong tetap dipantau (siaga). Kartu grafis
+bawaan prosesor yang lemah bisa lebih lambat dari CPU. Pilihan Otomatis mengukurnya dan tetap memakai CPU bila begitu.
 
 Layar HP / laptop lain (jaringan lokal) menampilkan grid yang sama dengan gambar kecil 5 fps supaya WiFi tidak berat.
 Menyalakan Mode CCTV, mengubah kamera, dan menggambar zona tetap hanya dari laptop SAHABAT. Mode CCTV yang dinyalakan
@@ -257,7 +279,7 @@ Rincian lengkap ada di [Laporan Teknis SAHABAT Sekolah](docs/Laporan-Teknis-SAHA
 | Sistem operasi | Windows 10/11 64-bit | Windows 11 |
 | Prosesor | 4 inti, setara Intel Core i5 / Ryzen 5 | AMD Ryzen 5 3550H |
 | RAM | 8 GB | 14 GB |
-| Kartu grafis | Tidak perlu | Radeon Vega 8 terpadu (tidak dipakai) |
+| Kartu grafis | Tidak perlu. Mode CCTV dengan lebih dari 2 kamera: GPU dengan DirectML (NVIDIA/AMD/Intel) | Radeon Vega 8 terpadu (Mode CCTV, uji GPU) |
 | Ruang disk | 3 GB | |
 | Kamera | Webcam USB atau bawaan laptop, IP camera, atau channel DVR/NVR (RTSP) | Webcam bawaan |
 | Internet | Hanya saat penyalaan pertama | |

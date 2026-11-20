@@ -25,7 +25,8 @@ VIDEO_EXTENSIONS = (".mp4", ".avi", ".mkv", ".mov", ".wmv", ".webm", ".m4v")
 _SETTINGS_LOCK = threading.RLock()
 
 LOCAL_FIELDS = ("imgsz", "tuned_for", "slow", "port", "camera", "words_enabled", "microphone",
-                "camera_flip", "clips_enabled", "zone", "lan_enabled", "lan_code", "cctv_enabled")
+                "camera_flip", "clips_enabled", "zone", "lan_enabled", "lan_code", "cctv_enabled",
+                "hitung", "gpu_ms", "gpu_id")
 
 
 @dataclass
@@ -38,6 +39,9 @@ class Config:
     cctv_hold_s: float = 5.0          # Mode CCTV: kamera tetap penuh selama ini sesudah orang terakhir terlihat
     cctv_safety_s: float = 5.0        # kamera siaga tetap dinilai pose sekali tiap selang ini
     cctv_motion_hz: float = 5.0       # laju cek gerak murah kamera siaga
+    hitung: str = "otomatis"          # perangkat hitung Mode CCTV: otomatis / gpu / cpu
+    gpu_ms: float | None = None       # hasil ukur GPU terakhir (milidetik per gambar)
+    gpu_id: int | None = None         # adaptor DirectML yang terakhir dipilih
     imgsz_candidates: tuple[int, ...] = (480, 416, 320)
     imgsz: int | None = None          # hasil autotune
     tuned_for: str | None = None      # platform.node() saat autotune
