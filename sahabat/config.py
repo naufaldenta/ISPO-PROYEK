@@ -93,6 +93,11 @@ class Config:
     violence_threshold: float = 0.8
     confirm_k: int = 6
     confirm_n: int = 10
+    # Konfirmasi berbasis waktu (profil kamera dekat). None = aturan k-dari-n di atas, tidak berubah. Bila diisi, alarm
+    # menyala saat dalam detik terakhir ada minimal confirm_min_hits penilaian tinggi dan minimal confirm_frac bagiannya.
+    confirm_window_s: float | None = None
+    confirm_frac: float = 0.6
+    confirm_min_hits: int = 3
     pair_cooldown_s: float = 5.0
     rule_limb_speed: float = 2.0
     rule_limb_dist: float = 0.6

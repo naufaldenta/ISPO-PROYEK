@@ -418,6 +418,21 @@ def test_pameran_position_is_saved_and_swaps_models(mode_env, monkeypatch, tmp_p
     assert saved == ["tinggi"]
 
 
+def test_close_position_sets_time_confirmation_and_back(mode_env, monkeypatch, tmp_path):
+    from sahabat.profil_kamera import CONFIRM_DEKAT_S, PERINGATAN_DEKAT
+    mode, engine, _ = mode_env()
+    calls = []
+    monkeypatch.setattr(server, "remember_posisi", lambda value: None)
+    engine.ganti_model = lambda v, f: None
+    engine.atur_profil = lambda window, dekat=False: calls.append((window, dekat))
+    app = create_app(engine, lan=FakeLan(), kamera=_store(tmp_path), mode=mode)
+    with TestClient(app) as c:
+        r = c.post("/api/posisi", json={"posisi": "dekat"}).json()
+        assert r["ok"] and r["posisi"] == "dekat" and r["peringatan"] == PERINGATAN_DEKAT
+        assert c.post("/api/posisi", json={"posisi": "dada"}).json()["peringatan"] == ""
+    assert calls == [(CONFIRM_DEKAT_S, True), (None, False)]
+
+
 def test_camera_list_warns_for_high_position_without_high_model(tmp_path):                # Bagian 5
     from sahabat.profil_kamera import PERINGATAN
     store = _store(tmp_path)

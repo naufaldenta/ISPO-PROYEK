@@ -7,6 +7,9 @@ Model pendamping `violence_model_setengah.joblib` (di folder yang sama) menilai 
 terlihat (kamera dekat). Model utama sebagian besar belajar dari seluruh badan; pendamping dilatih tambahan dengan sesi
 webcam setengah badan (latih.latih_sesi_webcam). Ambang pendamping disimpan di modelnya (`own_threshold_`) dan
 peluangnya diskalakan ke ambang aplikasi, supaya konfirmasi alarm tetap satu aturan.
+
+Model kalibrasi kamera lomba (`upper_only_`, latih.kalibrasi_dekat) melihat semua orang tanpa kaki dan membawa ambangnya
+sendiri dengan cara yang sama.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ import numpy as np
 
 from .config import Config
 from .history import Track
-from .pair_features import FEATURE_NAMES, MOTION_FEATURES, WINDOW_FEATURE_NAMES, close_pairs, pair_windows
+from .pair_features import FEATURE_NAMES, MOTION_FEATURES, WINDOW_FEATURE_NAMES, close_pairs, pair_windows, tanpa_kaki
 
 _F = {name: i for i, name in enumerate(FEATURE_NAMES)}
 COMPANION_NAME = "violence_model_setengah.joblib"
@@ -48,10 +51,16 @@ class ViolenceScorer:
         self._model = None
         self._half = None
         self._half_scale = 1.0
+        self._upper_only = False
+        self._own_scale = 1.0
         if model_path is not None and Path(model_path).is_file():
             self._model = _load_model(model_path)
+            if getattr(self._model, "upper_only_", False):
+                self._upper_only = True
+                self._own_scale = cfg.violence_threshold / float(getattr(self._model, "own_threshold_",
+                                                                         cfg.violence_threshold))
             companion = Path(model_path).with_name(COMPANION_NAME)
-            if self._model is not None and companion.is_file():
+            if self._model is not None and not self._upper_only and companion.is_file():
                 self._half = _load_model(companion)
                 own = float(getattr(self._half, "own_threshold_", cfg.violence_threshold))
                 self._half_scale = cfg.violence_threshold / own
@@ -72,7 +81,11 @@ class ViolenceScorer:
             return []
         if self._model is not None:              # satu panggilan untuk semua pasangan dan kedua arah
             rows = np.array(feats)
+            if self._upper_only:
+                rows = tanpa_kaki(rows)
             probs = self._model.predict_proba(rows)[:, 1]
+            if self._upper_only:
+                probs = np.minimum(probs * self._own_scale, 1.0)
             if self._half is not None:
                 half = np.repeat([tracks[i].mode != "full" and tracks[j].mode != "full" for i, j in ids], 2)
                 if half.any():

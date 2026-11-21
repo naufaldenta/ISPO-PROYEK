@@ -104,10 +104,11 @@ class CctvRunner:
         from .config import DATA_DIR
         from .engine import Engine
         from .predlog import PredLog
-        from .profil_kamera import model_untuk
+        from .profil_kamera import model_untuk, posisi_bersih
         models = model_untuk(cam.get("posisi"))
         engine = Engine(self.cfg, source, pose, PredLog(DATA_DIR / "log", prefix="cctv-" + cam["id"]), False,
                         models.violence, models.fall, None, self.riwayat, kamera=(cam["id"], cam["nama"]))
+        engine.atur_profil(models.confirm_window_s, posisi_bersih(cam.get("posisi")) == "dekat")
         engine.set_zone(cam.get("zona"))           # selalu: jangan mewarisi zona Mode Pameran dari cfg.zone
         return engine
 
@@ -243,6 +244,9 @@ class CctvRunner:
                 swap = getattr(cam.engine, "ganti_model", None)
                 if swap is not None:
                     swap(models.violence, models.fall)
+                profile = getattr(cam.engine, "atur_profil", None)
+                if profile is not None:
+                    profile(models.confirm_window_s, posisi == "dekat")
                 cam.posisi, cam.peringatan = posisi, models.peringatan
         extra = []
         with self._lock:

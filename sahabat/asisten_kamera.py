@@ -55,6 +55,7 @@ def leg_torso_ratio(person: Person) -> float | None:
 class Asisten:
     def __init__(self, window_s: float = 30.0, clock=time.monotonic) -> None:
         self.window_s = window_s
+        self.dekat = False                  # profil kamera dekat: setengah badan memang yang diharapkan
         self._clock = clock                 # jam server: saran basi bila tidak ada pengamatan baru selama window_s
         self._last_seen: float | None = None
         self._obs: deque = deque()          # (t, mode, tinggi_orang, rasio | None, id)
@@ -99,6 +100,13 @@ class Asisten:
         tinggi = statistics.median(o[2] for o in obs)
         ratios = [o[3] for o in obs if o[3] is not None]
         rasio = statistics.median(ratios) if len(ratios) >= MIN_RATIO_OBS else None
+        if self.dekat:
+            dinilai = round(100 * sum(o[1] != "none" for o in obs) / len(obs))
+            saran = [f"Badan bisa dinilai: {dinilai}%"]
+            if dinilai < 70:
+                saran.append("Kepala sampai pinggang belum selalu terlihat, mundurkan kamera sedikit")
+            return {"orang": len({o[4] for o in obs}), "utuh_persen": utuh, "tinggi_orang": round(tinggi, 3),
+                    "rasio_kaki_badan": round(rasio, 3) if rasio is not None else None, "saran": saran}
         saran = [f"Badan terlihat utuh: {utuh}%"]
         if tinggi < KECIL:
             saran.append("Orang terlalu kecil, dekatkan kamera atau pakai lensa lebih sempit")

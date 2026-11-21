@@ -1,6 +1,7 @@
 # Dibuat otomatis saat penyalaan pertama
 runtime/
 models/whisper-base/
+models/violence_model_dekat.joblib
 
 # Data lokal: pengaturan, log, dan rekaman uji tidak pernah ikut repositori
 data/

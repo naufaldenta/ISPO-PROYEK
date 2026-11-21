@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from math import ceil
 from typing import Literal
 
 from .config import Config
@@ -32,8 +33,10 @@ def _weakest(ids, modes: dict[int, ViewMode]) -> ViewMode:
 class AlarmManager:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
+        self.confirm_window_s = cfg.confirm_window_s
         self._pending: list[Event] = []
         self._windows: dict[tuple[int, int], deque[bool]] = {}
+        self._timed: dict[tuple[int, int], deque[tuple[float, bool]]] = {}   # konfirmasi berbasis waktu
         self._last_seen: dict[tuple[int, int], float] = {}
         self._cooldown_until: dict[tuple[int, int], float] = {}
         self._evidence: dict[tuple[int, int], deque[tuple[float, bool]]] = {}
@@ -53,6 +56,7 @@ class AlarmManager:
     def reset_input(self) -> None:
         """Kamera berubah: ID/konfirmasi lama tidak berlaku, tetapi alarm belum diperiksa tetap terkunci."""
         self._windows.clear()
+        self._timed.clear()
         self._last_seen.clear()
         self._cooldown_until.clear()
         self._evidence.clear()
@@ -75,6 +79,7 @@ class AlarmManager:
                 latched.add(ids)
                 self._evidence.pop(ids, None)
                 self._windows.pop(ids, None)
+                self._timed.pop(ids, None)
 
         for hit in hits:
             add(hit.ids, hit.kind)
@@ -85,6 +90,7 @@ class AlarmManager:
             window = self._windows.setdefault(ps.ids, deque(maxlen=cfg.confirm_n))
             if t < self._cooldown_until.get(ps.ids, float("-inf")):
                 window.clear()
+                self._timed.pop(ps.ids, None)
                 continue
             present = seen is None or all(i in seen for i in ps.ids)
             high = ps.prob >= cfg.violence_threshold and present
@@ -95,7 +101,7 @@ class AlarmManager:
                     evidence = self._evidence[ps.ids] = deque(maxlen=cfg.confirm_n)
                 if evidence is not None:
                     evidence.append((t, high))
-            if sum(window) >= cfg.confirm_k:
+            if self._confirmed(ps.ids, t, high, window):
                 add(ps.ids, "model")
 
         for ids, votes in list(self._evidence.items()):
@@ -117,12 +123,34 @@ class AlarmManager:
             self._windows[ids].append(False)             # pasangan yang berpisah meluruh
             if t - self._last_seen.get(ids, t) > FORGET_S:
                 del self._windows[ids]
+                self._timed.pop(ids, None)
                 self._last_seen.pop(ids, None)
         for ids in [k for k, until in self._cooldown_until.items() if t >= until]:
             del self._cooldown_until[ids]
 
         self._pending.extend(new)
         return new
+
+    def atur_konfirmasi(self, window_s: float | None) -> None:
+        """Profil kamera berganti: None = k-dari-n, angka = berbasis waktu. Suara konfirmasi lama dibuang."""
+        self.confirm_window_s = window_s
+        self._windows.clear()
+        self._timed.clear()
+
+    def _confirmed(self, ids, t: float, high: bool, window: deque[bool]) -> bool:
+        """k-dari-n seperti biasa; bila confirm_window_s diisi, bagian penilaian tinggi dalam selang waktu itu.
+
+        Berbasis waktu supaya syaratnya tetap sekitar satu detik gerak walau komputer hanya sanggup 5 penilaian per detik.
+        """
+        cfg = self.cfg
+        if self.confirm_window_s is None:
+            return sum(window) >= cfg.confirm_k
+        votes = self._timed.setdefault(ids, deque())
+        votes.append((t, high))
+        while t - votes[0][0] > self.confirm_window_s:
+            votes.popleft()
+        hits = sum(v for _, v in votes)
+        return hits >= max(cfg.confirm_min_hits, ceil(cfg.confirm_frac * len(votes) - 1e-9))
 
     def acknowledge(self, t: float) -> bool:
         """Guru menekan "Sudah diperiksa". False bila tidak ada alarm."""
@@ -132,6 +160,7 @@ class AlarmManager:
             if e.kind == "violence" and e.ids:
                 self._cooldown_until[e.ids] = t + self.cfg.pair_cooldown_s
                 self._windows.pop(e.ids, None)
+                self._timed.pop(e.ids, None)
                 self._evidence.pop(e.ids, None)
         self._pending = []
         return True

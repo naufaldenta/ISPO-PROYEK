@@ -179,6 +179,7 @@ kamera CCTV, dan di **Perangkat** untuk kamera Mode Pameran.
 |---|---|
 | Setinggi dada/kepala (sekitar 1,2–1,8 m), bawaan | Model sekarang |
 | Tinggi, di pojok atau langit-langit (sekitar 2,2–3 m) | Model kamera tinggi bila sudah lolos uji; bila belum, model sekarang dengan peringatan "Akurasi untuk kamera tinggi belum teruji." |
+| Dekat / lomba, setengah badan (sekitar 1–2,5 m) | Model sekarang dengan konfirmasi kekerasan berbasis waktu dan peringatan bila penilaian di bawah 8 per detik. Belum seandal kamera 3–4 m. Bisa dikalibrasi dari rekaman di posisi kamera lomba (`scripts\latih_model_lomba.bat`, butuh dataset pengembang) |
 
 Model kamera tinggi hanya dipasang bila, pada data kamera tinggi yang tidak ikut dilatih, ia menangkap lebih banyak
 kejadian tanpa menambah alarm keliru. Uji 20 November dengan dataset terbuka belum meloloskannya. Kandidat kekerasan

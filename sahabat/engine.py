@@ -35,6 +35,7 @@ BAR_TEXT: dict[str, str] = {
 }
 SLOW_TEXT = "laptop ini terlalu lambat, deteksi bisa meleset"
 CAMERA_SLOW_TEXT = "kamera hanya mengirim {} gambar per detik (ruangan kurang terang?), deteksi bisa meleset"
+RATE_SLOW_TEXT = "penilaian hanya {} kali per detik, pukulan bisa terlewat: matikan Kata kasar (M), tutup aplikasi lain"
 CAMERA_LOST_NOTE = "kamera terputus; alarm sebelumnya belum diperiksa"
 
 _BGR = {"green": (89, 199, 52), "red": (48, 59, 255), "gray": (160, 160, 160), "out": (125, 125, 125)}
@@ -95,6 +96,7 @@ class Engine:
         self.violence = ViolenceScorer(cfg, violence_model)
         self.alarm = AlarmManager(cfg)
         self.asisten = Asisten()       # petunjuk pemasangan kamera dari pose yang terlihat
+        self._dekat = False            # profil kamera dekat: laju penilaian yang rendah diperingatkan di layar
         self._alarm_seq = 0
         self._step_times: deque[float] = deque()
         self._last_t = 0.0
@@ -120,6 +122,13 @@ class Engine:
         with self._lock:
             self.violence, self.fall = violence, fall
             self.violence_model_path, self._fall_model_path = violence_model, fall_model
+
+    def atur_profil(self, confirm_window_s: float | None, dekat: bool = False) -> None:
+        """Bagian profil kamera di luar model: cara konfirmasi alarm, petunjuk pemasangan, dan peringatan laju."""
+        with self._lock:
+            self.alarm.atur_konfirmasi(confirm_window_s)
+            self.asisten.dekat = dekat
+            self._dekat = dekat
 
     def lupakan_orang(self) -> None:
         """Nomor orang dari pelacak mulai lagi dari 1 (Mode CCTV pindah dari GPU ke CPU): riwayat gerak lama
@@ -224,6 +233,8 @@ class Engine:
                 slow, slow_text = True, CAMERA_SLOW_TEXT.format(round(camera_fps))
             else:
                 slow, slow_text = self.slow, (SLOW_TEXT if self.slow else "")
+            if self._dekat and not slow and span >= _FPS_WINDOW_S / 2 and fps < self.cfg.fps_floor:
+                slow, slow_text = True, RATE_SLOW_TEXT.format(round(fps))
             snap = Snapshot(bar, BAR_TEXT[bar], round(fps, 1), len(people), slow,
                             self._alarm_seq, tuple(overlays), slow_text, self._recording())
             self._snapshot = snap

@@ -626,6 +626,9 @@ def create_app(engine, listener=None, inputs=None, lan=None, kamera=None, mode=N
             swap = getattr(engine, "ganti_model", None)
             if swap is not None:
                 await run_in_threadpool(swap, models.violence, models.fall)
+            profile = getattr(engine, "atur_profil", None)
+            if profile is not None:
+                await run_in_threadpool(profile, models.confirm_window_s, value == "dekat")
             await run_in_threadpool(refresh_recording_meta)
         try:
             await run_in_threadpool(remember_posisi, value)
@@ -1047,6 +1050,8 @@ def build_engine(cfg: Config, source=None, record: bool = False, biasa: bool = F
     if source is None:
         source = VideoSource(cfg.camera, flip=cfg.camera_flip, resolve=default_store().resolve)
         source.start()
+    from .profil_kamera import model_untuk, posisi_bersih
+    models = model_untuk(cfg.posisi_kamera)            # "dada" (bawaan) = model sekarang, sama persis dengan dulu
     pose = YoloPose(cfg.imgsz or cfg.imgsz_candidates[-1])
     from .riwayat import Riwayat
 
@@ -1056,10 +1061,10 @@ def build_engine(cfg: Config, source=None, record: bool = False, biasa: bool = F
         recorder = Recorder(DATA_DIR / "rekaman", meta=session_meta(cfg, biasa))
     riwayat = Riwayat(DATA_DIR / "riwayat", keep_clips=cfg.clips_enabled, before_s=cfg.clip_before_s,
                       after_s=cfg.clip_after_s, keep_days=cfg.clip_keep_days)
-    from .profil_kamera import model_untuk
-    models = model_untuk(cfg.posisi_kamera)            # "dada" (bawaan) = model sekarang, sama persis dengan dulu
-    return Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, models.violence, models.fall, recorder,
-                  riwayat)
+    engine = Engine(cfg, source, pose, PredLog(DATA_DIR / "log"), cfg.slow, models.violence, models.fall, recorder,
+                    riwayat)
+    engine.atur_profil(models.confirm_window_s, posisi_bersih(cfg.posisi_kamera) == "dekat")
+    return engine
 
 
 def build_listener(cfg: Config, clip_dir: Path | None = None, on_toggle=None) -> Listener:

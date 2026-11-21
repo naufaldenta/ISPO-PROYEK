@@ -23,11 +23,12 @@ def _models(folder: Path) -> None:
 
 
 def test_default_and_bad_values_are_dada():                                # Review Focus 3
-    assert POSISI == ("dada", "tinggi")
+    assert POSISI == ("dada", "tinggi", "dekat")
     assert posisi_bersih(None) == "dada" and posisi_bersih("atap") == "dada" and posisi_bersih(3) == "dada"
     assert posisi_bersih("tinggi") == "tinggi"
     assert LABEL == {"dada": "Setinggi dada/kepala (sekitar 1,2–1,8 m)",
-                     "tinggi": "Tinggi, di pojok atau langit-langit (sekitar 2,2–3 m)"}
+                     "tinggi": "Tinggi, di pojok atau langit-langit (sekitar 2,2–3 m)",
+                     "dekat": "Dekat / lomba, setengah badan (sekitar 1–2,5 m)"}
 
 
 class _Usable:
@@ -131,3 +132,13 @@ def test_position_only_change_does_not_reconnect_a_video_camera(tmp_path):      
     item = store.save({"nama": "Simulasi", "jenis": "video", "video": "uji.mp4"})
     after = store.save({"id": item["id"], "nama": "Simulasi", "jenis": "video", "video": "uji.mp4", "posisi": "tinggi"})
     assert after["posisi"] == "tinggi" and after["rev"] == item["rev"]
+
+
+def test_close_profile_keeps_models_and_changes_only_confirmation(tmp_path):
+    from sahabat.profil_kamera import CONFIRM_DEKAT_S, PERINGATAN_DEKAT
+    _models(tmp_path)
+    m = model_untuk("dekat", tmp_path)
+    assert (m.violence.name, m.fall.name) == ("violence_model.joblib", "fall_model.joblib")
+    assert (m.confirm_window_s, m.peringatan) == (CONFIRM_DEKAT_S, PERINGATAN_DEKAT)
+    dada = model_untuk("dada", tmp_path)
+    assert dada.confirm_window_s is None

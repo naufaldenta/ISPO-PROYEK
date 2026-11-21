@@ -49,6 +49,22 @@ MATCH_TOL_S = 0.05
 MIN_SHARED = 5
 STALE_S = 0.25
 
+_LEG_ZERO = tuple(FEATURE_NAMES.index(n) for n in ("ankle_toward_max", "knee_straight_max"))
+_LEG_FAR = FEATURE_NAMES.index("ankle_dist_min")
+_LEG_SERIES = tuple(WINDOW_FEATURE_NAMES.index(f"{n}_t{k}") for n in ("ankle_l", "ankle_r") for k in range(SEQ_TICKS))
+
+
+def tanpa_kaki(rows: np.ndarray) -> np.ndarray:
+    """Baris fitur seolah kaki tidak terlihat (kamera dekat), untuk orang yang kakinya terpotong maupun utuh.
+
+    Deret kaki diisi FAR, bukan NaN: kolom yang seluruhnya kosong tidak bisa dilatih gradient boosting.
+    """
+    out = np.array(rows, dtype=np.float32, copy=True)
+    out[..., list(_LEG_ZERO)] = 0.0
+    out[..., _LEG_FAR] = FAR
+    out[..., list(_LEG_SERIES)] = FAR
+    return out
+
 
 def close_pairs(tracks: dict[int, Track], max_dist: float) -> list[tuple[Track, Track]]:
     """Pasangan bernomor naik yang keduanya bisa dinilai dan tengah badannya berdekatan."""
